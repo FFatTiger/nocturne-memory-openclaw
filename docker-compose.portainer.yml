@@ -40,7 +40,7 @@ services:
       retries: 10
 
   frontend:
-    image: nocturne-memory-frontend:plugin-20260325-165659
+    image: fffattiger/nocturne-memory-frontend:plugin-20260325-180901
     restart: unless-stopped
     depends_on:
       backend:

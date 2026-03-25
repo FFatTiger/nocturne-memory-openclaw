@@ -257,7 +257,7 @@ docker push fffattiger/nocturne-memory-frontend:plugin-20260325-180901
   "embeddingBaseUrl": "http://127.0.0.1:8090/v1",
   "embeddingApiKey": "YOUR_API_KEY",
   "embeddingModel": "text-embedding-3-large",
-  "minDisplayScore": 0.6,
+  "minDisplayScore": 0.4,
   "maxDisplayItems": 3,
   "scorePrecision": 2,
   "readNodeDisplayMode": "soft"
