@@ -24,6 +24,7 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 from sqlalchemy.orm import declarative_base, relationship
+from sqlalchemy.types import UserDefinedType
 
 Base = declarative_base()
 
@@ -61,6 +62,37 @@ def serialize_memory_ref(obj) -> Dict[str, Any]:
     d = serialize_row(obj)
     d.pop("content", None)
     return d
+
+
+def vector_literal(value) -> str | None:
+    """Serialize a Python vector into pgvector text literal format."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    if not isinstance(value, (list, tuple)):
+        raise TypeError("Vector value must be a string, list, or tuple")
+    return "[" + ",".join(format(float(x), ".12g") for x in value) + "]"
+
+
+class PGVector(UserDefinedType):
+    """Minimal pgvector SQLAlchemy type.
+
+    We keep the Python-side representation as the pgvector text literal so the
+    backend can use raw SQL distance operators without requiring a driver-level
+    codec registration.
+    """
+
+    cache_ok = True
+
+    def get_col_spec(self, **kw):
+        return "VECTOR"
+
+    def bind_processor(self, dialect):
+        return vector_literal
+
+    def result_processor(self, dialect, coltype):
+        return lambda value: value
 
 
 # =============================================================================
@@ -238,7 +270,7 @@ class RecallDocument(Base):
     embedding_text = Column(Text, nullable=False)
     embedding_model = Column(String(128), nullable=False)
     embedding_dim = Column(Integer, nullable=False, default=0)
-    embedding_json = Column(Text, nullable=False)
+    embedding_vector = Column(PGVector(), nullable=False)
     source_signature = Column(String(64), nullable=False, index=True)
     updated_at = Column(DateTime, default=datetime.utcnow)
 

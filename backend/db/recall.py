@@ -4,17 +4,16 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import re
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Optional, TYPE_CHECKING
 
 import httpx
-from sqlalchemy import select, delete, tuple_
+from sqlalchemy import select, delete, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import RecallDocument, SearchDocument, GlossaryKeyword, SessionReadNode
+from .models import SearchDocument, GlossaryKeyword, SessionReadNode, vector_literal
 
 if TYPE_CHECKING:
     from .database import DatabaseManager
@@ -53,8 +52,8 @@ class RecallService:
             return []
 
     @staticmethod
-    def _truncate(text: str | None, max_chars: int) -> str:
-        value = (text or "").strip()
+    def _truncate(text_value: str | None, max_chars: int) -> str:
+        value = (text_value or "").strip()
         return value if len(value) <= max_chars else value[:max_chars] + "…"
 
     @staticmethod
@@ -67,40 +66,47 @@ class RecallService:
         return path.split("/")[-1] if path else "root"
 
     @staticmethod
-    def _build_embedding_text(doc: dict[str, Any]) -> str:
+    def _dedupe_terms(values: list[str], *, max_items: int) -> list[str]:
+        out: list[str] = []
+        seen: set[str] = set()
+        for item in values:
+            text_value = str(item or "").strip()
+            key = text_value.casefold()
+            if not text_value or key in seen:
+                continue
+            seen.add(key)
+            out.append(text_value)
+            if len(out) >= max_items:
+                break
+        return out
+
+    @classmethod
+    def _build_embedding_text(cls, doc: dict[str, Any]) -> str:
+        path_tokens = [token for token in re.split(r"[/_\-\s]+", doc.get("path") or "") if len(token) >= 2]
+        name_tokens = [token for token in re.split(r"[/_\-\s]+", doc.get("name") or "") if token]
+        glossary = [str(item) for item in (doc.get("glossary_keywords") or [])]
+        disclosure = cls._truncate(doc.get("disclosure"), 120)
+        trigger_terms = cls._dedupe_terms(glossary + name_tokens + path_tokens, max_items=8)
+
         parts = [
             f"URI: {doc['uri']}",
             f"Name: {doc['name']}",
-            f"Priority: {doc['priority']}",
         ]
-        if doc.get("disclosure"):
-            parts.append(f"Disclosure: {doc['disclosure']}")
-        if doc.get("body_preview"):
-            parts.append("Content:\n" + doc["body_preview"])
+        if trigger_terms:
+            parts.append("Triggers: " + ", ".join(trigger_terms))
+        if disclosure:
+            parts.append(f"Hint: {disclosure}")
         return "\n".join(parts)
 
-    @staticmethod
-    def _build_cue_text(doc: dict[str, Any]) -> str:
-        parts: list[str] = []
-        glossary = doc.get("glossary_keywords") or []
-        if glossary:
-            parts.extend(glossary[:3])
+    @classmethod
+    def _build_cue_text(cls, doc: dict[str, Any]) -> str:
+        glossary = [str(item) for item in (doc.get("glossary_keywords") or [])]
         name = doc.get("name") or ""
-        if name:
-            parts.extend([token for token in re.split(r"[/_\-\s]+", name) if token][:2])
-        disclosure = (doc.get("disclosure") or "").strip()
-        if disclosure:
-            parts.append(disclosure[:80])
-        seen: set[str] = set()
-        out: list[str] = []
-        for item in parts:
-            item = str(item).strip()
-            key = item.casefold()
-            if not item or key in seen:
-                continue
-            seen.add(key)
-            out.append(item)
-        return " · ".join(out[:4])
+        name_tokens = [token for token in re.split(r"[/_\-\s]+", name) if token]
+        path_tokens = [token for token in re.split(r"[/_\-\s]+", doc.get("path") or "") if len(token) >= 2]
+        disclosure = cls._truncate(doc.get("disclosure"), 80)
+        parts = cls._dedupe_terms(glossary + name_tokens + path_tokens + ([disclosure] if disclosure else []), max_items=6)
+        return " · ".join(parts)
 
     @staticmethod
     def _tokenize_query(query: str) -> list[str]:
@@ -125,11 +131,11 @@ class RecallService:
         }
         out: list[list[float]] = []
         async with httpx.AsyncClient(timeout=cfg.timeout_ms / 1000) as client:
-            for text in inputs:
+            for text_value in inputs:
                 resp = await client.post(
                     f"{cfg.base_url.rstrip('/')}/embeddings",
                     headers=headers,
-                    json={"model": cfg.model, "input": text},
+                    json={"model": cfg.model, "input": text_value},
                 )
                 resp.raise_for_status()
                 data = resp.json()
@@ -208,91 +214,150 @@ class RecallService:
             source_docs = await self._load_source_documents(session)
             existing_rows = (
                 await session.execute(
-                    select(RecallDocument).where(RecallDocument.embedding_model == embedding.model)
+                    text(
+                        """
+                        SELECT domain, path, source_signature
+                        FROM recall_documents
+                        """
+                    )
                 )
-            ).scalars().all()
-            existing_map = {(row.domain, row.path): row for row in existing_rows}
+            ).mappings().all()
+            existing_map = {(row["domain"], row["path"]): row for row in existing_rows}
             source_map = {(doc["domain"], doc["path"]): doc for doc in source_docs}
 
             stale: list[dict[str, Any]] = []
             for key, doc in source_map.items():
                 row = existing_map.get(key)
-                if not row or row.source_signature != doc["source_signature"]:
+                if not row or row["source_signature"] != doc["source_signature"]:
                     stale.append(doc)
 
             if stale:
                 vectors = await self._embed_texts(embedding, [doc["embedding_text"] for doc in stale])
                 for doc, vector in zip(stale, vectors):
-                    row = existing_map.get((doc["domain"], doc["path"]))
-                    if not row:
-                        row = RecallDocument(domain=doc["domain"], path=doc["path"])
-                        session.add(row)
-                    row.node_uuid = doc["node_uuid"]
-                    row.memory_id = doc["memory_id"]
-                    row.uri = doc["uri"]
-                    row.name = doc["name"]
-                    row.priority = doc["priority"]
-                    row.disclosure = doc["disclosure"]
-                    row.glossary_json = json.dumps(doc["glossary_keywords"], ensure_ascii=False)
-                    row.cue_text = doc["cue_text"]
-                    row.body_preview = doc["body_preview"]
-                    row.embedding_text = doc["embedding_text"]
-                    row.embedding_model = embedding.model
-                    row.embedding_dim = len(vector)
-                    row.embedding_json = json.dumps(vector)
-                    row.source_signature = doc["source_signature"]
-                    row.updated_at = datetime.utcnow()
+                    await session.execute(
+                        text(
+                            """
+                            INSERT INTO recall_documents (
+                                domain,
+                                path,
+                                node_uuid,
+                                memory_id,
+                                uri,
+                                name,
+                                priority,
+                                disclosure,
+                                glossary_json,
+                                cue_text,
+                                body_preview,
+                                embedding_text,
+                                embedding_model,
+                                embedding_dim,
+                                embedding_vector,
+                                source_signature,
+                                updated_at
+                            ) VALUES (
+                                :domain,
+                                :path,
+                                :node_uuid,
+                                :memory_id,
+                                :uri,
+                                :name,
+                                :priority,
+                                :disclosure,
+                                :glossary_json,
+                                :cue_text,
+                                :body_preview,
+                                :embedding_text,
+                                :embedding_model,
+                                :embedding_dim,
+                                CAST(:embedding_vector AS vector),
+                                :source_signature,
+                                :updated_at
+                            )
+                            ON CONFLICT (domain, path) DO UPDATE SET
+                                node_uuid = EXCLUDED.node_uuid,
+                                memory_id = EXCLUDED.memory_id,
+                                uri = EXCLUDED.uri,
+                                name = EXCLUDED.name,
+                                priority = EXCLUDED.priority,
+                                disclosure = EXCLUDED.disclosure,
+                                glossary_json = EXCLUDED.glossary_json,
+                                cue_text = EXCLUDED.cue_text,
+                                body_preview = EXCLUDED.body_preview,
+                                embedding_text = EXCLUDED.embedding_text,
+                                embedding_model = EXCLUDED.embedding_model,
+                                embedding_dim = EXCLUDED.embedding_dim,
+                                embedding_vector = EXCLUDED.embedding_vector,
+                                source_signature = EXCLUDED.source_signature,
+                                updated_at = EXCLUDED.updated_at
+                            """
+                        ),
+                        {
+                            "domain": doc["domain"],
+                            "path": doc["path"],
+                            "node_uuid": doc["node_uuid"],
+                            "memory_id": doc["memory_id"],
+                            "uri": doc["uri"],
+                            "name": doc["name"],
+                            "priority": doc["priority"],
+                            "disclosure": doc["disclosure"],
+                            "glossary_json": json.dumps(doc["glossary_keywords"], ensure_ascii=False),
+                            "cue_text": doc["cue_text"],
+                            "body_preview": doc["body_preview"],
+                            "embedding_text": doc["embedding_text"],
+                            "embedding_model": embedding.model,
+                            "embedding_dim": len(vector),
+                            "embedding_vector": vector_literal(vector),
+                            "source_signature": doc["source_signature"],
+                            "updated_at": datetime.utcnow(),
+                        },
+                    )
 
             stale_keys = set(existing_map) - set(source_map)
+            deleted_count = 0
             if stale_keys:
-                await session.execute(
-                    delete(RecallDocument).where(
-                        RecallDocument.embedding_model == embedding.model,
-                        tuple_(RecallDocument.domain, RecallDocument.path).in_(list(stale_keys)),
+                for domain, path in stale_keys:
+                    result = await session.execute(
+                        text(
+                            "DELETE FROM recall_documents WHERE domain = :domain AND path = :path"
+                        ),
+                        {"domain": domain, "path": path},
                     )
-                )
+                    deleted_count += result.rowcount or 0
 
             return {
                 "source_count": len(source_docs),
                 "updated_count": len(stale),
-                "deleted_count": len(stale_keys),
+                "deleted_count": deleted_count,
             }
 
-    @staticmethod
-    def _cosine(a: list[float], b: list[float]) -> float:
-        dot = sum(x * y for x, y in zip(a, b))
-        na = math.sqrt(sum(x * x for x in a))
-        nb = math.sqrt(sum(y * y for y in b))
-        if na == 0 or nb == 0:
-            return 0.0
-        return dot / (na * nb)
-
-    def _exact_bonus(self, query: str, row: RecallDocument) -> tuple[float, list[str], list[str]]:
+    def _exact_bonus(self, query: str, row: dict[str, Any]) -> tuple[float, list[str], list[str]]:
         q = query.casefold()
         bonus = 0.0
         reasons: list[str] = []
         cues: list[str] = []
 
-        glossary_hits = [kw for kw in self._parse_glossary_json(row.glossary_json) if kw.casefold() in q]
+        glossary_hits = [kw for kw in self._parse_glossary_json(row.get("glossary_json")) if kw.casefold() in q]
         if glossary_hits:
             bonus += min(0.18, 0.07 * len(glossary_hits))
             reasons.append("glossary")
             cues.extend(glossary_hits[:3])
 
-        name = (row.name or "").replace("_", " ").replace("-", " ")
+        name = (row.get("name") or "").replace("_", " ").replace("-", " ")
         if name and name.casefold() in q:
             bonus += 0.08
             reasons.append("name")
-            cues.append(row.name)
+            cues.append(row.get("name") or "")
 
-        path_tokens = [x for x in re.split(r"[/_\-\s]+", row.path or "") if len(x) >= 3]
+        path_tokens = [x for x in re.split(r"[/_\-\s]+", row.get("path") or "") if len(x) >= 3]
         path_hits = [tok for tok in path_tokens if tok.casefold() in q]
         if path_hits:
             bonus += min(0.10, 0.03 * len(path_hits))
             reasons.append("path")
             cues.extend(path_hits[:3])
 
-        overlap_terms = [tok for tok in _EXACT_DISCLOSURE_TOKENS if tok.casefold() in q and tok.casefold() in (row.disclosure or "").casefold()]
+        disclosure_text = (row.get("disclosure") or "")
+        overlap_terms = [tok for tok in _EXACT_DISCLOSURE_TOKENS if tok.casefold() in q and tok.casefold() in disclosure_text.casefold()]
         if overlap_terms:
             bonus += min(0.08, 0.02 * len(overlap_terms))
             reasons.append("disclosure")
@@ -391,11 +456,39 @@ class RecallService:
         async with self._optional_session(session) as session:
             index_stats = await self.ensure_index(embedding, session=session)
             q_emb = (await self._embed_texts(embedding, [query]))[0]
+            query_vector = vector_literal(q_emb)
+            candidate_limit = max(limit, max_display_items, 1) * 6
+
             rows = (
                 await session.execute(
-                    select(RecallDocument).where(RecallDocument.embedding_model == embedding.model)
+                    text(
+                        """
+                        SELECT
+                            domain,
+                            path,
+                            uri,
+                            name,
+                            priority,
+                            disclosure,
+                            glossary_json,
+                            cue_text,
+                            1 - (embedding_vector <=> CAST(:query_vector AS vector)) AS cosine
+                        FROM recall_documents
+                        WHERE embedding_model = :embedding_model
+                        ORDER BY embedding_vector <=> CAST(:query_vector AS vector),
+                                 priority ASC,
+                                 char_length(path) ASC
+                        LIMIT :candidate_limit
+                        """
+                    ),
+                    {
+                        "query_vector": query_vector,
+                        "embedding_model": embedding.model,
+                        "candidate_limit": candidate_limit,
+                    },
                 )
-            ).scalars().all()
+            ).mappings().all()
+
             read_uris: set[str] = set()
             if session_id:
                 read_uris = {
@@ -408,22 +501,21 @@ class RecallService:
 
             ranked: list[dict[str, Any]] = []
             for row in rows:
-                vector = json.loads(row.embedding_json)
-                cosine = self._cosine(q_emb, vector)
+                cosine = float(row.get("cosine") or 0.0)
                 bonus, reasons, matched_cues = self._exact_bonus(query, row)
                 score = cosine + bonus
                 if score < min_score:
                     continue
                 item = {
-                    "uri": row.uri,
+                    "uri": row["uri"],
                     "score": round(score, score_precision + 4),
                     "score_display": round(score, score_precision),
                     "cosine": round(cosine, 6),
                     "bonus": round(bonus, 6),
                     "reasons": reasons,
-                    "cues": matched_cues or [cue.strip() for cue in row.cue_text.split("·") if cue.strip()][:3],
-                    "read": row.uri in read_uris,
-                    "boot": row.uri in boot_uris,
+                    "cues": matched_cues or [cue.strip() for cue in str(row.get("cue_text") or "").split("·") if cue.strip()][:3],
+                    "read": row["uri"] in read_uris,
+                    "boot": row["uri"] in boot_uris,
                 }
                 ranked.append(item)
 

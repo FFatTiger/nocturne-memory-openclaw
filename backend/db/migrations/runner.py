@@ -126,100 +126,98 @@ async def run_migrations(engine: AsyncEngine):
     from datetime import datetime
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    if str(engine.url).startswith("sqlite"):
-        db_path = engine.url.database
-        if db_path and db_path != ":memory:" and os.path.exists(db_path):
-            import shutil
-            backup_path = f"{db_path}.{timestamp}.bak"
-            _announce_backup(
-                f"Pending migrations detected. Backing up SQLite database to {backup_path}"
-            )
-            try:
-                shutil.copy2(db_path, backup_path)
-            except Exception as e:
-                logger.error(f"Failed to backup database: {e}. Aborting migration.")
-                raise RuntimeError(f"Database backup failed: {e}") from e
-                
-    elif str(engine.url).startswith("postgresql"):
-        import subprocess
-        db_name = engine.url.database or "db"
-        
-        # Store backups under the app root (<repo>/backend locally, /app in Docker).
-        backup_dir = os.path.join(_get_app_root(), "backups")
-        os.makedirs(backup_dir, exist_ok=True)
-        backup_base = os.path.join(backup_dir, f"{db_name}_{timestamp}")
-        dump_backup_path = f"{backup_base}.sql"
-        json_backup_path = f"{backup_base}.json"
-        
-        _announce_backup(
-            f"Pending migrations detected. Backing up PostgreSQL database to {dump_backup_path}"
+    if not str(engine.url).startswith("postgresql"):
+        raise RuntimeError(
+            "Nocturne migrations are now PostgreSQL-only. "
+            "Please point DATABASE_URL at PostgreSQL."
         )
-        try:
-            # Convert asyncpg/psycopg2 URL to standard postgresql:// for pg_dump
-            pg_url = engine.url.set(drivername="postgresql")
-            
-            # Create a URL without the password so pg_dump falls back to PGPASSWORD
-            url_without_password = pg_url.set(password=None)
-            safe_pg_url = url_without_password.render_as_string(hide_password=False)
-            
-            # pg_dump strictly requires ?sslmode=disable, asyncpg requires ?ssl=disable
-            safe_pg_url = safe_pg_url.replace("ssl=disable", "sslmode=disable")
-            
-            # Pass password securely via environment variable
-            dump_env = os.environ.copy()
-            if pg_url.password:
-                dump_env["PGPASSWORD"] = pg_url.password
-                
-            # pg_dump streams the remote database to a local file
-            subprocess.run(
-                ["pg_dump", safe_pg_url, "-f", dump_backup_path],
-                check=True,
-                capture_output=True,
-                text=True,
-                env=dump_env
-            )
-            _announce_backup(f"PostgreSQL backup successfully saved to {dump_backup_path}")
-        except FileNotFoundError:
-            warning_msg = (
-                "================================================================================\n"
-                "[EN] WARNING: 'pg_dump' not found\n"
-                "\n"
-                "     Cannot create a full backup. Falling back to a JSON data-only export.\n"
-                "     If this migration drops tables/columns, YOU CANNOT AUTOMATICALLY RESTORE THEM.\n"
-                "     Migration will continue in 10 seconds.\n"
-                "     Press Ctrl+C now if you want to abort.\n"
-                "\n"
-                "[CN] 警告：未找到 'pg_dump'\n"
-                "\n"
-                "     无法创建完整备份。现降级为仅导出 JSON 数据。\n"
-                "     如果本次迁移包含删除表或列的操作，您将无法自动恢复数据库！\n"
-                "     迁移将在 10 秒后继续。\n"
-                "     如果要中止，请现在按 Ctrl+C。\n"
-                "================================================================================"
-            )
-            _announce_backup(warning_msg)
-            
-            import asyncio
-            for i in range(10, 0, -1):
-                msg = f"[!] Proceeding in {i}s... / {i}秒后继续... (Press Ctrl+C to abort / 按 Ctrl+C 终止)   "
-                print(msg, end="\r", file=sys.stderr, flush=True)
-                await asyncio.sleep(1)
-            print(
-                "[!] Starting migration now. Do not close this window. / 现在开始迁移。请不要关闭此窗口。                                        ",
-                file=sys.stderr,
-                flush=True,
-            )
-            
-            await _backup_postgresql_via_python(engine, json_backup_path)
-            _announce_backup(
-                f"[!] Data export (JSON) saved to {json_backup_path}. Schema changes are NOT protected."
-            )
-        except subprocess.CalledProcessError as e:
-            logger.error(f"pg_dump failed: {e.stderr}. Aborting migration.")
-            raise RuntimeError(f"Database backup failed: {e.stderr}") from e
-        except Exception as e:
-            logger.error(f"Failed to backup PostgreSQL database: {e}. Aborting migration.")
-            raise RuntimeError(f"Database backup failed: {e}") from e
+
+    import subprocess
+    db_name = engine.url.database or "db"
+
+    # Store backups under the app root (<repo>/backend locally, /app in Docker).
+    backup_dir = os.path.join(_get_app_root(), "backups")
+    os.makedirs(backup_dir, exist_ok=True)
+    backup_base = os.path.join(backup_dir, f"{db_name}_{timestamp}")
+    dump_backup_path = f"{backup_base}.sql"
+    json_backup_path = f"{backup_base}.json"
+
+    _announce_backup(
+        f"Pending migrations detected. Backing up PostgreSQL database to {dump_backup_path}"
+    )
+    try:
+        # Convert asyncpg/psycopg2 URL to standard postgresql:// for pg_dump
+        pg_url = engine.url.set(drivername="postgresql")
+
+        # Create a URL without the password so pg_dump falls back to PGPASSWORD
+        url_without_password = pg_url.set(password=None)
+        safe_pg_url = url_without_password.render_as_string(hide_password=False)
+
+        # pg_dump strictly requires ?sslmode=disable, asyncpg requires ?ssl=disable
+        safe_pg_url = safe_pg_url.replace("ssl=disable", "sslmode=disable")
+
+        # Pass password securely via environment variable
+        dump_env = os.environ.copy()
+        if pg_url.password:
+            dump_env["PGPASSWORD"] = pg_url.password
+
+        # pg_dump streams the remote database to a local file
+        subprocess.run(
+            ["pg_dump", safe_pg_url, "-f", dump_backup_path],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=dump_env
+        )
+        _announce_backup(f"PostgreSQL backup successfully saved to {dump_backup_path}")
+    except FileNotFoundError:
+        warning_msg = (
+            "================================================================================\n"
+            "[EN] WARNING: 'pg_dump' not found\n"
+            "\n"
+            "     Cannot create a full backup. Falling back to a JSON data-only export.\n"
+            "     If this migration drops tables/columns, YOU CANNOT AUTOMATICALLY RESTORE THEM.\n"
+            "     Migration will continue in 10 seconds.\n"
+            "     Press Ctrl+C now if you want to abort.\n"
+            "\n"
+            "[CN] 警告：未找到 'pg_dump'\n"
+            "\n"
+            "     无法创建完整备份。现降级为仅导出 JSON 数据。\n"
+            "     如果本次迁移包含删除表或列的操作，您将无法自动恢复数据库！\n"
+            "     迁移将在 10 秒后继续。\n"
+            "     如果要中止，请现在按 Ctrl+C。\n"
+            "================================================================================"
+        )
+        _announce_backup(warning_msg)
+
+        import asyncio
+        for i in range(10, 0, -1):
+            msg = f"[!] Proceeding in {i}s... / {i}秒后继续... (Press Ctrl+C to abort / 按 Ctrl+C 终止)   "
+            print(msg, end="\r", file=sys.stderr, flush=True)
+            await asyncio.sleep(1)
+        print(
+            "[!] Starting migration now. Do not close this window. / 现在开始迁移。请不要关闭此窗口。                                        ",
+            file=sys.stderr,
+            flush=True,
+        )
+
+        await _backup_postgresql_via_python(engine, json_backup_path)
+        _announce_backup(
+            f"[!] Data export (JSON) saved to {json_backup_path}. Schema changes are NOT protected."
+        )
+    except subprocess.CalledProcessError as e:
+        warning_msg = (
+            "[WARN] pg_dump failed; falling back to JSON data export. "
+            f"Original error: {e.stderr.strip() if e.stderr else e}"
+        )
+        _announce_backup(warning_msg)
+        await _backup_postgresql_via_python(engine, json_backup_path)
+        _announce_backup(
+            f"[!] Data export (JSON) saved to {json_backup_path}. Schema changes are NOT fully protected."
+        )
+    except Exception as e:
+        logger.error(f"Failed to backup PostgreSQL database: {e}. Aborting migration.")
+        raise RuntimeError(f"Database backup failed: {e}") from e
 
     for file in pending_migrations:
         logger.info(f"Applying migration: {file}")

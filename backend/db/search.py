@@ -3,8 +3,8 @@
 """
 FTS Search Indexer and Query Engine for Nocturne Memory System.
 
-Maintains derived search rows (search_documents / search_documents_fts)
-and provides full-text search across the memory graph.
+Maintains derived search rows (search_documents) and provides PostgreSQL
+full-text search across the memory graph.
 """
 
 from typing import Optional, Dict, Any, List, TYPE_CHECKING
@@ -27,31 +27,12 @@ if TYPE_CHECKING:
 
 
 class SearchIndexer:
-    """FTS index maintenance and query engine.
-
-    Manages the derived search_documents table, keeping it in sync with
-    the live graph state.  Supports both SQLite FTS5 and PostgreSQL
-    tsvector backends.
-    """
+    """FTS index maintenance and query engine for PostgreSQL."""
 
     def __init__(self, db: "DatabaseManager"):
         self._session = db.session
         self._optional_session = db._optional_session
         self.db_type = db.db_type
-
-    # -----------------------------------------------------------------
-    # Query helpers (stateless)
-    # -----------------------------------------------------------------
-
-    @staticmethod
-    def _to_sqlite_match_query(query: str) -> str:
-        """Convert free text into a conservative FTS5 MATCH expression."""
-        normalized = expand_query_terms(query)
-        tokens = [token.replace('"', '""') for token in normalized.split() if token]
-        if not tokens:
-            raw = query.strip().replace('"', '""')
-            return f'"{raw}"' if raw else ""
-        return " AND ".join(f'"{token}"' for token in tokens)
 
     @staticmethod
     def _format_search_snippet(content: str, query: str) -> str:
@@ -84,10 +65,6 @@ class SearchIndexer:
         prefix = "..." if start > 0 else ""
         suffix = "..." if end < len(content) else ""
         return prefix + content[start:end] + suffix
-
-    # -----------------------------------------------------------------
-    # Index maintenance
-    # -----------------------------------------------------------------
 
     async def _build_search_documents_for_node(
         self, session: AsyncSession, node_uuid: str
@@ -150,12 +127,6 @@ class SearchIndexer:
         self, session: AsyncSession, node_uuid: str
     ) -> None:
         """Remove all derived search rows for a node."""
-        if self.db_type == "sqlite":
-            await session.execute(
-                text("DELETE FROM search_documents_fts WHERE node_uuid = :node_uuid"),
-                {"node_uuid": node_uuid},
-            )
-
         await session.execute(
             delete(SearchDocument).where(SearchDocument.node_uuid == node_uuid)
         )
@@ -169,23 +140,6 @@ class SearchIndexer:
 
         session.add_all(SearchDocument(**doc) for doc in documents)
         await session.flush()
-
-        if self.db_type != "sqlite":
-            return
-
-        for doc in documents:
-            await session.execute(
-                text(
-                    """
-                    INSERT INTO search_documents_fts (
-                        domain, path, node_uuid, uri, content, disclosure, search_terms
-                    ) VALUES (
-                        :domain, :path, :node_uuid, :uri, :content, coalesce(:disclosure, ''), :search_terms
-                    )
-                    """
-                ),
-                doc,
-            )
 
     async def refresh_search_documents_for_node(
         self, node_uuid: str, session: Optional[AsyncSession] = None
@@ -221,9 +175,6 @@ class SearchIndexer:
     ) -> None:
         """Fully rebuild the derived search index from live graph state."""
         async with self._optional_session(session) as session:
-            if self.db_type == "sqlite":
-                await session.execute(text("DELETE FROM search_documents_fts"))
-
             await session.execute(delete(SearchDocument))
 
             result = await session.execute(
@@ -236,96 +187,63 @@ class SearchIndexer:
                 documents = await self._build_search_documents_for_node(session, node_uuid)
                 await self._insert_search_documents(session, documents)
 
-    # -----------------------------------------------------------------
-    # Public search API
-    # -----------------------------------------------------------------
-
     async def search(
         self, query: str, limit: int = 10, domain: Optional[str] = None
     ) -> List[Dict[str, Any]]:
-        """Search memories by path and content using the derived FTS index."""
+        """Search memories by path and content using PostgreSQL full-text search."""
         async with self._session() as session:
             candidate_limit = max(limit * 5, 50)
-            params = {"candidate_limit": candidate_limit}
+            normalized = expand_query_terms(query)
+            if not normalized:
+                return []
+
+            params = {
+                "candidate_limit": candidate_limit,
+                "ts_query": normalized,
+            }
             domain_clause = ""
             if domain is not None:
                 params["domain"] = domain
                 domain_clause = "AND sd.domain = :domain"
 
-            if self.db_type == "sqlite":
-                match_query = self._to_sqlite_match_query(query)
-                if not match_query:
-                    return []
-
-                params["match_query"] = match_query
-                result = await session.execute(
-                    text(
-                        f"""
-                        SELECT
-                            sd.domain,
-                            sd.path,
-                            sd.node_uuid,
-                            sd.uri,
-                            sd.priority,
-                            sd.content,
-                            sd.disclosure,
-                            bm25(search_documents_fts, 0.0, 2.5, 0.0, 2.0, 1.0, 1.0, 0.75) AS score
-                        FROM search_documents AS sd
-                        JOIN search_documents_fts
-                          ON search_documents_fts.domain = sd.domain
-                         AND search_documents_fts.path = sd.path
-                        WHERE search_documents_fts MATCH :match_query
-                          {domain_clause}
-                        ORDER BY score ASC, sd.priority ASC, length(sd.path) ASC
-                        LIMIT :candidate_limit
-                        """
-                    ),
-                    params,
-                )
-            else:
-                normalized = expand_query_terms(query)
-                if not normalized:
-                    return []
-
-                params["ts_query"] = normalized
-                result = await session.execute(
-                    text(
-                        f"""
-                        SELECT
-                            sd.domain,
-                            sd.path,
-                            sd.node_uuid,
-                            sd.uri,
-                            sd.priority,
-                            sd.content,
-                            sd.disclosure,
-                            ts_rank_cd(
-                                to_tsvector(
-                                    'simple',
-                                    coalesce(sd.path, '') || ' ' ||
-                                    coalesce(sd.uri, '') || ' ' ||
-                                    coalesce(sd.content, '') || ' ' ||
-                                    coalesce(sd.disclosure, '') || ' ' ||
-                                    coalesce(sd.search_terms, '')
-                                ),
-                                websearch_to_tsquery('simple', :ts_query)
-                            ) AS score
-                        FROM search_documents AS sd
-                        WHERE to_tsvector(
+            result = await session.execute(
+                text(
+                    f"""
+                    SELECT
+                        sd.domain,
+                        sd.path,
+                        sd.node_uuid,
+                        sd.uri,
+                        sd.priority,
+                        sd.content,
+                        sd.disclosure,
+                        ts_rank_cd(
+                            to_tsvector(
                                 'simple',
                                 coalesce(sd.path, '') || ' ' ||
                                 coalesce(sd.uri, '') || ' ' ||
                                 coalesce(sd.content, '') || ' ' ||
                                 coalesce(sd.disclosure, '') || ' ' ||
                                 coalesce(sd.search_terms, '')
-                              ) @@ websearch_to_tsquery('simple', :ts_query)
-                          {domain_clause}
-                        ORDER BY score DESC, sd.priority ASC, char_length(sd.path) ASC
-                        LIMIT :candidate_limit
-                        """
-                    ),
-                    params,
-                )
+                            ),
+                            websearch_to_tsquery('simple', :ts_query)
+                        ) AS score
+                    FROM search_documents AS sd
+                    WHERE to_tsvector(
+                            'simple',
+                            coalesce(sd.path, '') || ' ' ||
+                            coalesce(sd.uri, '') || ' ' ||
+                            coalesce(sd.content, '') || ' ' ||
+                            coalesce(sd.disclosure, '') || ' ' ||
+                            coalesce(sd.search_terms, '')
+                          ) @@ websearch_to_tsquery('simple', :ts_query)
+                      {domain_clause}
+                    ORDER BY score DESC, sd.priority ASC, char_length(sd.path) ASC
+                    LIMIT :candidate_limit
+                    """
+                ),
+                params,
+            )
 
             matches = []
             seen_nodes = set()

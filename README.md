@@ -184,13 +184,13 @@ docker compose up -d --build
 
 当前可用镜像：
 
-- backend: `fffattiger/nocturne-memory-backend:pgonly-20260325`
+- backend: `fffattiger/nocturne-memory-backend:recallcue-20260325-230834`
 - frontend: `fffattiger/nocturne-memory-frontend:plugin-20260325-180901`
 
 最小 `.env` 覆盖示例：
 
 ```env
-NOCTURNE_BACKEND_IMAGE=fffattiger/nocturne-memory-backend:pgonly-20260325
+NOCTURNE_BACKEND_IMAGE=fffattiger/nocturne-memory-backend:recallcue-20260325-230834
 NOCTURNE_FRONTEND_IMAGE=fffattiger/nocturne-memory-frontend:plugin-20260325-180901
 ```
 
@@ -206,7 +206,7 @@ docker compose up -d
 ### 构建
 
 ```bash
-docker build -t fffattiger/nocturne-memory-backend:pgonly-20260325 ./backend
+docker build -t fffattiger/nocturne-memory-backend:recallcue-20260325-230834 ./backend
 docker build -t fffattiger/nocturne-memory-frontend:plugin-20260325-180901 ./frontend
 ```
 
@@ -214,7 +214,7 @@ docker build -t fffattiger/nocturne-memory-frontend:plugin-20260325-180901 ./fro
 
 ```bash
 echo "$DOCKER_HUB_TOKEN" | docker login -u fffattiger --password-stdin
-docker push fffattiger/nocturne-memory-backend:pgonly-20260325
+docker push fffattiger/nocturne-memory-backend:recallcue-20260325-230834
 docker push fffattiger/nocturne-memory-frontend:plugin-20260325-180901
 ```
 
@@ -274,6 +274,7 @@ recall 索引会写到 PostgreSQL 的 `recall_documents` 表里。
 - embedding 改为 `pgvector` 的 `vector` 列
 - 查询时直接在 PostgreSQL 内做向量相似度排序
 - session read tracking 仍然走普通关系表
+- 当前 recall 的 embedding 输入已经从“大段正文预览”改成“短 cue 卡片”：优先使用 URI、name、glossary、path token、少量 disclosure hint，而不是整段正文
 
 ## Plugin Lab 页面
 

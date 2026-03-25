@@ -1,0 +1,51 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: nocturne
+      POSTGRES_USER: nocturne
+      POSTGRES_PASSWORD: LfEtVWtD5SSRKSgcu4pZxLlt
+    ports:
+      - "55439:5432"
+    volumes:
+      - /home/proxxy/apps/nocturne-memory/data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nocturne -d nocturne"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    image: fffattiger/nocturne-memory-backend:recallcue-20260325-230834
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://nocturne:LfEtVWtD5SSRKSgcu4pZxLlt@postgres:5432/nocturne
+      API_TOKEN: ""
+      SNAPSHOT_DIR: /app/snapshots
+      VALID_DOMAINS: core,writer,game,notes,project,system
+      CORE_MEMORY_URIS: core://agent,preferences://user,core://workflow
+    ports:
+      - "18901:18901"
+    volumes:
+      - /home/proxxy/apps/nocturne-memory/data/backend/snapshots:/app/snapshots
+      - /home/proxxy/apps/nocturne-memory/data/backend/backups:/app/backups
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:18901/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  frontend:
+    image: nocturne-memory-frontend:plugin-20260325-165659
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      BACKEND_URL: http://backend:18901
+    ports:
+      - "18902:18902"

@@ -18,7 +18,7 @@ services:
       retries: 10
 
   backend:
-    image: ${NOCTURNE_BACKEND_IMAGE:-fffattiger/nocturne-memory-backend:pgonly-20260325}
+    image: ${NOCTURNE_BACKEND_IMAGE:-fffattiger/nocturne-memory-backend:recallcue-20260325-230834}
     build:
       context: ./backend
     restart: unless-stopped
