@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
-import { ShieldCheck, Database, Sparkles, AlertCircle } from 'lucide-react';
+import { ShieldCheck, Database, Sparkles, AlertCircle, FlaskConical } from 'lucide-react';
 import clsx from 'clsx';
 import { getDomains, AUTH_ERROR_EVENT } from '../lib/api';
 import TokenAuth from './TokenAuth';
@@ -10,6 +10,7 @@ import TokenAuth from './TokenAuth';
 const tabs = [
   { href: '/review', icon: ShieldCheck, label: 'Review' },
   { href: '/memory', icon: Database, label: 'Explorer' },
+  { href: '/plugin', icon: FlaskConical, label: 'Plugin' },
   { href: '/maintenance', icon: Sparkles, label: 'Cleanup' },
 ];
 
@@ -43,7 +44,10 @@ function TabBar() {
       </div>
 
       <div className="fixed bottom-3 left-3 right-3 z-50 md:hidden">
-        <div className="grid grid-cols-3 gap-1 rounded-2xl border border-white/10 bg-zinc-900/90 p-1 shadow-2xl shadow-black/40 backdrop-blur-2xl">
+        <div
+          className="grid gap-1 rounded-2xl border border-white/10 bg-zinc-900/90 p-1 shadow-2xl shadow-black/40 backdrop-blur-2xl"
+          style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}
+        >
           {tabs.map(({ href, icon: Icon, label }) => {
             const active = pathname === href || pathname.startsWith(`${href}/`);
             return (

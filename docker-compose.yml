@@ -1,0 +1,61 @@
+services:
+  postgres:
+    image: ${NOCTURNE_POSTGRES_IMAGE:-pgvector/pgvector:pg16}
+    container_name: ${NOCTURNE_POSTGRES_CONTAINER:-nocturne-postgres}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-nocturne}
+      POSTGRES_USER: ${POSTGRES_USER:-nocturne}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - nocturne_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nocturne} -d ${POSTGRES_DB:-nocturne}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    image: ${NOCTURNE_BACKEND_IMAGE:-fffattiger/nocturne-memory-backend:pgonly-20260325}
+    build:
+      context: ./backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://nocturne:change-me@postgres:5432/nocturne}
+      API_TOKEN: ${API_TOKEN:-}
+      SNAPSHOT_DIR: /app/snapshots
+      VALID_DOMAINS: ${VALID_DOMAINS:-core,writer,game,notes,project,system}
+      CORE_MEMORY_URIS: ${CORE_MEMORY_URIS:-core://agent,preferences://user,core://workflow}
+    ports:
+      - "${BACKEND_PORT:-18901}:18901"
+    volumes:
+      - nocturne_backend_snapshots:/app/snapshots
+      - nocturne_backend_backups:/app/backups
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:18901/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  frontend:
+    image: ${NOCTURNE_FRONTEND_IMAGE:-fffattiger/nocturne-memory-frontend:plugin-20260325-180901}
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      BACKEND_URL: ${FRONTEND_BACKEND_URL:-http://backend:18901}
+    ports:
+      - "${FRONTEND_PORT:-18902}:18902"
+
+volumes:
+  nocturne_postgres_data:
+  nocturne_backend_snapshots:
+  nocturne_backend_backups:
