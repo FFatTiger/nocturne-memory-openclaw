@@ -733,52 +733,6 @@ export default function register(api) {
   });
 
   api.registerTool({
-    name: "nocturne_recall",
-    label: "Nocturne recall",
-    description: "Run semantic recall over Nocturne nodes and return a compact recall block.",
-    parameters: {
-      type: "object",
-      additionalProperties: false,
-      required: ["query"],
-      properties: {
-        query: { type: "string" },
-        session_id: { type: "string" },
-        min_display_score: { type: "number" },
-        max_display_items: { type: "integer", minimum: 1, maximum: 10 },
-        score_precision: { type: "integer", minimum: 0, maximum: 4 },
-        read_node_display_mode: { type: "string", enum: ["soft", "hard"] },
-      }
-    },
-    async execute(_id, params) {
-      if (!hasRecallConfig(pluginCfg)) {
-        return textResult("Nocturne recall is not configured.", { ok: false, configured: false });
-      }
-      const body = {
-        query: String(params?.query || "").trim(),
-        session_id: typeof params?.session_id === "string" && params.session_id.trim() ? params.session_id.trim() : undefined,
-        max_display_items: Number.isFinite(params?.max_display_items) ? Number(params.max_display_items) : pluginCfg.recallMaxDisplayItems,
-        min_display_score: Number.isFinite(params?.min_display_score) ? Number(params.min_display_score) : pluginCfg.recallMinDisplayScore,
-        score_precision: Number.isFinite(params?.score_precision) ? Number(params.score_precision) : pluginCfg.recallScorePrecision,
-        read_node_display_mode: params?.read_node_display_mode === "hard" ? "hard" : pluginCfg.readNodeDisplayMode,
-        exclude_boot_from_results: pluginCfg.excludeBootFromResults,
-        embedding: {
-          base_url: pluginCfg.embeddingBaseUrl,
-          api_key: pluginCfg.embeddingApiKey,
-          model: pluginCfg.embeddingModel,
-          timeout_ms: pluginCfg.timeoutMs,
-        },
-      };
-      try {
-        const data = await fetchJson(pluginCfg, "/browse/recall", { method: "POST", body: JSON.stringify(body) });
-        const block = formatRecallBlock(data?.items || [], body.score_precision);
-        return textResult(block || "<recall>\n</recall>", { ok: true, configured: true, recall: data });
-      } catch (error) {
-        return textResult(`Nocturne recall failed: ${error.message}`, { ok: false, error: error.message });
-      }
-    },
-  });
-
-  api.registerTool({
     name: "nocturne_list_session_reads",
     label: "Nocturne list session reads",
     description: "List Nocturne nodes already read in the current session.",
