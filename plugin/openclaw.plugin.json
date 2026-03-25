@@ -1,0 +1,45 @@
+{
+  "id": "nocturne",
+  "name": "Nocturne Memory",
+  "description": "Direct Nocturne backend API plugin with prompt guidance and lifecycle hooks.",
+  "version": "0.1.0",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": { "type": "boolean" },
+      "baseUrl": { "type": "string" },
+      "apiToken": { "type": "string" },
+      "timeoutMs": { "type": "integer", "minimum": 1000, "maximum": 120000 },
+      "defaultDomain": { "type": "string" },
+      "injectPromptGuidance": { "type": "boolean" },
+      "startupHealthcheck": { "type": "boolean" },
+      "recallEnabled": { "type": "boolean" },
+      "embeddingBaseUrl": { "type": "string" },
+      "embeddingApiKey": { "type": "string" },
+      "embeddingModel": { "type": "string" },
+      "minDisplayScore": { "type": "number" },
+      "maxDisplayItems": { "type": "integer", "minimum": 1, "maximum": 10 },
+      "scorePrecision": { "type": "integer", "minimum": 0, "maximum": 4 },
+      "readNodeDisplayMode": { "type": "string", "enum": ["soft", "hard"] },
+      "excludeBootFromResults": { "type": "boolean" }
+    }
+  },
+  "uiHints": {
+    "baseUrl": { "label": "Nocturne API Base URL", "placeholder": "http://127.0.0.1:18901" },
+    "apiToken": { "label": "Nocturne API Token", "sensitive": true },
+    "timeoutMs": { "label": "Timeout (ms)" },
+    "defaultDomain": { "label": "Default Domain", "placeholder": "core" },
+    "injectPromptGuidance": { "label": "Inject Prompt Guidance" },
+    "startupHealthcheck": { "label": "Startup Health Check" },
+    "recallEnabled": { "label": "Enable Recall Injection" },
+    "embeddingBaseUrl": { "label": "Embedding Base URL", "placeholder": "http://127.0.0.1:8090/v1" },
+    "embeddingApiKey": { "label": "Embedding API Key", "sensitive": true },
+    "embeddingModel": { "label": "Embedding Model", "placeholder": "text-embedding-3-large" },
+    "minDisplayScore": { "label": "Recall Min Display Score" },
+    "maxDisplayItems": { "label": "Recall Max Display Items" },
+    "scorePrecision": { "label": "Recall Score Precision" },
+    "readNodeDisplayMode": { "label": "Read Node Display Mode" },
+    "excludeBootFromResults": { "label": "Exclude Boot Nodes From Recall Results" }
+  }
+}

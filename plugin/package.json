@@ -1,0 +1,11 @@
+{
+  "name": "@local/nocturne",
+  "version": "0.1.0",
+  "description": "Local Nocturne memory plugin for OpenClaw",
+  "type": "module",
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

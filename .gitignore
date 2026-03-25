@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# Node / Next
+node_modules/
+.next/
+out/
+
+# Runtime / local state
+.env
+.env.*
+!.env.example
+!.env.local.example
+*.log
+state/
+*.db
+*.db-*
+*.bak
+snapshots/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Coverage / build
+coverage/
+dist/
+build/
