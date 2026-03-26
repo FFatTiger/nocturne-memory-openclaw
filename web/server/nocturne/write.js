@@ -36,27 +36,26 @@ export async function updateNodeByPath({ domain = 'core', path, content, priorit
           WHERE node_uuid = $1 AND deprecated = FALSE
           ORDER BY created_at DESC
           LIMIT 1
+          FOR UPDATE
         `,
         [ctx.child_uuid],
       );
       const currentMemory = currentMemoryResult.rows[0];
       if (currentMemory && currentMemory.content !== content) {
-        const insertResult = await client.query(
-          `
-            INSERT INTO memories (node_uuid, content, deprecated, migrated_to, created_at)
-            VALUES ($1, $2, FALSE, NULL, NOW())
-            RETURNING id
-          `,
-          [ctx.child_uuid, content],
-        );
-        const newMemoryId = insertResult.rows[0].id;
         await client.query(
           `
             UPDATE memories
-            SET deprecated = TRUE, migrated_to = $2
-            WHERE node_uuid = $1 AND deprecated = FALSE AND id <> $2
+            SET deprecated = TRUE, migrated_to = NULL
+            WHERE id = $1
           `,
-          [ctx.child_uuid, newMemoryId],
+          [currentMemory.id],
+        );
+        await client.query(
+          `
+            INSERT INTO memories (node_uuid, content, deprecated, migrated_to, created_at)
+            VALUES ($1, $2, FALSE, NULL, NOW())
+          `,
+          [ctx.child_uuid, content],
         );
       }
     }

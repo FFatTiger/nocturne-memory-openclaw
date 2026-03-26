@@ -261,7 +261,7 @@ Default image variables:
 
 ```env
 NOCTURNE_POSTGRES_IMAGE=pgvector/pgvector:pg16
-NOCTURNE_FRONTEND_IMAGE=fffattiger/nocturne-memory-frontend:ssr-20260326-1022-amd64
+NOCTURNE_FRONTEND_IMAGE=fffattiger/nocturne-memory-frontend:ssr-20260326-1418-fix1-amd64
 ```
 
 To use published images directly:

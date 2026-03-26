@@ -178,6 +178,23 @@ function normalizeSearchResults(data) {
   return [];
 }
 
+function normalizeGlossaryEntries(data) {
+  const raw = Array.isArray(data?.glossary) ? data.glossary : [];
+  if (raw.length === 0) return [];
+  if (raw.some((item) => Array.isArray(item?.nodes))) return raw;
+
+  const grouped = new Map();
+  for (const item of raw) {
+    const keyword = String(item?.keyword || "").trim();
+    if (!keyword) continue;
+    const bucket = grouped.get(keyword) || { keyword, nodes: [] };
+    const nodeUuid = String(item?.node_uuid || "").trim();
+    if (nodeUuid) bucket.nodes.push({ node_uuid: nodeUuid });
+    grouped.set(keyword, bucket);
+  }
+  return Array.from(grouped.values()).sort((a, b) => a.keyword.localeCompare(b.keyword));
+}
+
 function hasRecallConfig(pluginCfg) {
   return Boolean(pluginCfg.recallEnabled && pluginCfg.embeddingBaseUrl && pluginCfg.embeddingApiKey && pluginCfg.embeddingModel);
 }
@@ -539,7 +556,7 @@ export default function register(api) {
     async execute() {
       try {
         const data = await fetchJson(pluginCfg, "/browse/glossary", { method: "GET" });
-        const glossary = Array.isArray(data?.glossary) ? data.glossary : [];
+        const glossary = normalizeGlossaryEntries(data);
         const text = glossary.length > 0
           ? glossary.map((item) => {
               const nodes = Array.isArray(item?.nodes) ? item.nodes : [];

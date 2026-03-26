@@ -17,7 +17,7 @@ services:
       retries: 10
 
   web:
-    image: fffattiger/nocturne-memory-frontend:ssr-20260326-1022-amd64
+    image: fffattiger/nocturne-memory-frontend:ssr-20260326-1418-fix1-amd64
     restart: unless-stopped
     depends_on:
       postgres:

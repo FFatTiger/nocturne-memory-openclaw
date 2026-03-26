@@ -95,7 +95,7 @@ export async function manageTriggers({ uri, add = [], remove = [] }) {
 }
 
 export async function searchMemories({ query, domain = null, limit = 10 }) {
-  const where = [`m.deprecated = FALSE`, `(p.path ILIKE $1 OR m.content ILIKE $1)`];
+  const where = [`(p.path ILIKE $1 OR m.content ILIKE $1)`];
   const params = [`%${query}%`];
   if (domain) {
     params.push(domain);
