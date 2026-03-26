@@ -26,7 +26,7 @@
     }
   },
   "uiHints": {
-    "baseUrl": { "label": "Nocturne API Base URL", "placeholder": "http://127.0.0.1:18902" },
+    "baseUrl": { "label": "Nocturne API Base URL", "placeholder": "http://127.0.0.1:18901" },
     "apiToken": { "label": "Nocturne API Token", "sensitive": true },
     "timeoutMs": { "label": "Timeout (ms)" },
     "defaultDomain": { "label": "Default Domain", "placeholder": "core" },

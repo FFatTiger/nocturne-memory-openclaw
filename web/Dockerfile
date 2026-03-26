@@ -12,9 +12,9 @@ RUN npm run build
 FROM node:20-bookworm-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production \
-    PORT=18902 \
+    PORT=18901 \
     HOSTNAME=0.0.0.0
 COPY --from=builder /app .
 RUN mkdir -p /app/snapshots
-EXPOSE 18902
-CMD ["npm", "start", "--", "-H", "0.0.0.0", "-p", "18902"]
+EXPOSE 18901
+CMD ["npm", "start", "--", "-H", "0.0.0.0", "-p", "18901"]

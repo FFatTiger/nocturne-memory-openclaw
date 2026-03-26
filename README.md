@@ -100,7 +100,7 @@ POSTGRES_PASSWORD=change-me
 POSTGRES_PORT=5432
 DATABASE_URL=postgresql://nocturne:change-me@postgres:5432/nocturne
 API_TOKEN=your-token-if-needed
-FRONTEND_PORT=18902
+WEB_PORT=18901
 CORE_MEMORY_URIS=core://agent,preferences://user,core://workflow
 NOCTURNE_POSTGRES_IMAGE=pgvector/pgvector:pg16
 NOCTURNE_FRONTEND_IMAGE=fffattiger/nocturne-memory-frontend:ssr-20260326-1022-amd64
@@ -121,13 +121,13 @@ docker compose up -d --build
 Default exposed ports:
 
 - PostgreSQL: `5432`
-- web app: `18902`
+- web app: `18901`
 
 After startup:
 
-- app health: `http://127.0.0.1:18902/api/health`
-- main UI: `http://127.0.0.1:18902`
-- Plugin Lab: `http://127.0.0.1:18902/plugin`
+- app health: `http://127.0.0.1:18901/api/health`
+- main UI: `http://127.0.0.1:18901`
+- Plugin Lab: `http://127.0.0.1:18901/plugin`
 
 ## Local development
 
@@ -155,7 +155,7 @@ Production-style local run:
 cd web
 npm install
 npm run build
-npm start -- -H 0.0.0.0 -p 18902
+npm start -- -H 0.0.0.0 -p 18901
 ```
 
 ## OpenClaw plugin
@@ -176,7 +176,7 @@ Load it from OpenClaw and point it at the web service base URL:
       "nocturne": {
         "enabled": true,
         "config": {
-          "baseUrl": "http://127.0.0.1:18902",
+          "baseUrl": "http://127.0.0.1:18901",
           "timeoutMs": 30000,
           "defaultDomain": "core",
           "injectPromptGuidance": true,
@@ -278,9 +278,9 @@ A Portainer-oriented example deployment is included in `docker-compose.portainer
 Basic sanity checks:
 
 ```bash
-curl http://127.0.0.1:18902/api/health
-curl http://127.0.0.1:18902/api/browse/domains
-curl 'http://127.0.0.1:18902/api/browse/node?domain=core&path=agent'
+curl http://127.0.0.1:18901/api/health
+curl http://127.0.0.1:18901/api/browse/domains
+curl 'http://127.0.0.1:18901/api/browse/node?domain=core&path=agent'
 ```
 
 Build check:

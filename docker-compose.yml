@@ -31,7 +31,7 @@ services:
       CORE_MEMORY_URIS: ${CORE_MEMORY_URIS:-core://agent,preferences://user,core://workflow}
       SNAPSHOT_DIR: /app/snapshots
     ports:
-      - "${FRONTEND_PORT:-18902}:18902"
+      - "${WEB_PORT:-18901}:18901"
     volumes:
       - nocturne_frontend_snapshots:/app/snapshots
 

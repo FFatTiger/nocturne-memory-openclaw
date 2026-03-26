@@ -28,6 +28,6 @@ services:
       CORE_MEMORY_URIS: core://agent,preferences://user,core://workflow
       SNAPSHOT_DIR: /app/snapshots
     ports:
-      - "18902:18902"
+      - "18901:18901"
     volumes:
       - /home/proxxy/apps/nocturne-memory/data/web/snapshots:/app/snapshots
