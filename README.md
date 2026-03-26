@@ -1,109 +1,118 @@
 # Nocturne Memory for OpenClaw
 
-一个把 **Nocturne 后端 + Next.js 前端 + OpenClaw 本地插件** 收到同一仓库里的二次开发版本。
+Nocturne Memory for OpenClaw is a PostgreSQL-first Nocturne distribution that packages three pieces in one repository:
 
-这不是上游仓库的原样镜像，而是围绕 OpenClaw 场景做的整理版：REST 化接入、前端代理、recall 链路，以及 PostgreSQL + pgvector 部署方案都在这里。
+- a **FastAPI backend** for the Nocturne memory graph
+- a **Next.js frontend** for browsing and operating the graph
+- a **local OpenClaw plugin** that talks to the backend over REST
 
-## 现在的技术路线
+This repo is meant for self-hosted OpenClaw deployments. It keeps the memory service, web UI, and plugin integration in one place so you can run the full stack without MCP bridging or a split codebase.
 
-这个仓库现在是 **PostgreSQL-only**。
+## What this fork focuses on
 
-- 主数据：PostgreSQL
-- recall 向量：**同一个 PostgreSQL** 里的 `pgvector`
-- 全文搜索：PostgreSQL `tsvector`
-- 前端代理：Next.js
-- OpenClaw 接入：本地插件走 REST API
+This is not a mirror of the upstream repository. It is a focused integration fork for the OpenClaw workflow.
 
-不再维护 SQLite 分支，也不再拆两套数据库。
+Key differences:
 
-## 上游来源 / Original Upstream
+- **REST-based OpenClaw integration** via `plugin/`
+- **PostgreSQL-only** storage
+- **pgvector-backed recall** stored in the same database
+- **Next.js proxy frontend** so the browser can talk to the backend through the web app
+- **session-read tracking** and **recall injection** for OpenClaw
+- a built-in **Plugin Lab** page for testing integration flows
 
-本仓库的后端与前端基础来自：
+## Architecture
 
-- Upstream repository: `https://github.com/Dataojitori/nocturne_memory`
+```text
+OpenClaw ──local plugin──> FastAPI backend ──> PostgreSQL + pgvector
+   │
+   └──── optional recall injection
 
-上游仓库当前许可证为 **MIT License**，本仓库保留其 `LICENSE`。
+Browser ──> Next.js frontend ──> /api/[...path] proxy ──> FastAPI backend
+```
 
-## 主要改动
+Current stack:
 
-1. **OpenClaw 本地插件接入**
-   - 新增 `plugin/`
-   - 通过 REST API 而不是旧的 MCP 桥作为主要接入方式
-   - 提供 `nocturne_*` 工具注册、prompt guidance 注入、hook 生命周期逻辑
+- **Backend:** FastAPI
+- **Frontend:** Next.js 14
+- **Database:** PostgreSQL
+- **Vector search:** `pgvector`
+- **Full-text search:** PostgreSQL FTS
+- **Plugin transport:** REST API
 
-2. **前端改为可代理后端的 Next.js 结构**
-   - `frontend/app/api/[...path]/route.js` 负责把前端请求代理到后端 API
-   - 外部访问前端时，不需要浏览器直接跨域打后端
-
-3. **后端补充 OpenClaw 集成能力**
-   - 浏览 API 扩展
-   - recall / session-read 相关接口与数据结构
-   - 与插件协作的读取追踪逻辑
-
-4. **前端新增 Plugin Lab 页面**
-   - 新增 `/plugin` 测试页
-   - 可直接验证 status / boot / browse / glossary / alias / triggers / review / maintenance / recall
-   - 适合对照 OpenClaw plugin 的各个能力逐项联调
-
-5. **存储统一到 PostgreSQL**
-   - 普通图数据走 PostgreSQL
-   - recall embedding 存到 `pgvector`
-   - search 走 PostgreSQL FTS
-
-## 目录结构
+## Repository layout
 
 ```text
 .
-├── backend/                 # FastAPI backend
-│   ├── api/
-│   ├── db/
-│   ├── models/
-│   ├── tests/
-│   ├── Dockerfile
-│   ├── main.py
-│   └── requirements.txt
-├── frontend/                # Next.js frontend
-│   ├── app/
-│   ├── public/
-│   ├── src/
-│   ├── Dockerfile
-│   └── package.json
-├── plugin/                  # OpenClaw local plugin
-│   ├── index.ts
-│   ├── openclaw.plugin.json
-│   └── package.json
-├── docker-compose.yml
+├── backend/                   # FastAPI backend
+├── frontend/                  # Next.js frontend
+├── plugin/                    # Local OpenClaw plugin
+├── docker-compose.yml         # Default self-hosted stack
+├── docker-compose.portainer.yml
 ├── .env.example
-├── LICENSE
 └── README.md
 ```
 
-## 快速开始
+## Requirements
 
-### 1) 准备环境变量
+For the default deployment path:
 
-复制一份根目录 `.env.example`：
+- Docker + Docker Compose
+
+For local development:
+
+- Python 3.11+
+- Node.js 18+
+- PostgreSQL with the `vector` extension available
+
+## Quick start
+
+### 1. Configure environment
 
 ```bash
 cp .env.example .env
 ```
 
-示例：
+Important variables:
 
 ```env
-DATABASE_URL=postgresql+asyncpg://nocturne:change-me@127.0.0.1:5432/nocturne
+POSTGRES_DB=nocturne
+POSTGRES_USER=nocturne
+POSTGRES_PASSWORD=change-me
+DATABASE_URL=postgresql+asyncpg://nocturne:change-me@postgres:5432/nocturne
 API_TOKEN=your-token-if-needed
+BACKEND_PORT=18901
+FRONTEND_PORT=18902
 ```
 
-说明：
+Notes:
 
-- 可以直接写 `postgresql://...`
-- 后端会自动归一化成 `postgresql+asyncpg://...`
-- 目标数据库用户需要有 `CREATE EXTENSION vector` 权限
+- `pgvector` is required.
+- `API_TOKEN` is optional, but recommended outside local development.
+- `/health` is intentionally left unauthenticated for health checks.
 
-### 2) 本地直接启动后端
+### 2. Start the full stack with Docker
 
-建议 Python 3.11+。
+```bash
+docker compose up -d --build
+```
+
+Default exposed ports:
+
+- PostgreSQL: `5432`
+- backend: `18901`
+- frontend: `18902`
+
+After startup:
+
+- backend health: `http://127.0.0.1:18901/health`
+- backend docs: `http://127.0.0.1:18901/docs`
+- frontend: `http://127.0.0.1:18902`
+- Plugin Lab: `http://127.0.0.1:18902/plugin`
+
+## Local development
+
+### Backend
 
 ```bash
 cd backend
@@ -113,9 +122,7 @@ pip install -r requirements.txt
 python -m uvicorn main:app --host 0.0.0.0 --port 18901 --app-dir .
 ```
 
-### 3) 本地直接启动前端
-
-建议 Node.js 18+。
+### Frontend
 
 ```bash
 cd frontend
@@ -124,7 +131,13 @@ npm install
 npm run dev
 ```
 
-生产模式：
+`frontend/.env.local.example` defaults to:
+
+```env
+BACKEND_URL=http://127.0.0.1:18901
+```
+
+For a production-style frontend run:
 
 ```bash
 cd frontend
@@ -133,96 +146,11 @@ npm run build
 npm start -- -H 0.0.0.0 -p 18902
 ```
 
-## Docker 部署
+## OpenClaw plugin
 
-仓库根目录带了 `docker-compose.yml`。
+The local plugin lives in `plugin/`.
 
-默认会启动三项：
-
-- `postgres`：`pgvector/pgvector:pg16`
-- `backend`：FastAPI
-- `frontend`：Next.js
-
-### 本地或 Ubuntu 直接起
-
-```bash
-docker compose up -d --build
-```
-
-默认端口：
-
-- PostgreSQL: `5432`
-- backend: `18901`
-- frontend: `18902`
-
-### 常用环境变量
-
-```env
-POSTGRES_DB=nocturne
-POSTGRES_USER=nocturne
-POSTGRES_PASSWORD=change-me
-DATABASE_URL=postgresql+asyncpg://nocturne:change-me@postgres:5432/nocturne
-API_TOKEN=
-BACKEND_PORT=18901
-FRONTEND_PORT=18902
-```
-
-### Ubuntu 部署建议
-
-如果是全新 Ubuntu 主机，最省事的方式是：
-
-```bash
-git clone <this-repo>
-cd nocturne-openclaw-public
-cp .env.example .env
-# 按实际情况改密码 / token / 域名反代
-
-docker compose up -d --build
-```
-
-如果你不想在 Ubuntu 现场编译，也可以直接使用已发布镜像。
-
-当前可用镜像：
-
-- backend: `fffattiger/nocturne-memory-backend:recallcue-20260325-230834`
-- frontend: `fffattiger/nocturne-memory-frontend:plugin-20260325-180901`
-
-最小 `.env` 覆盖示例：
-
-```env
-NOCTURNE_BACKEND_IMAGE=fffattiger/nocturne-memory-backend:recallcue-20260325-230834
-NOCTURNE_FRONTEND_IMAGE=fffattiger/nocturne-memory-frontend:plugin-20260325-180901
-```
-
-然后：
-
-```bash
-docker compose pull
-docker compose up -d
-```
-
-## Docker Hub 推镜像
-
-### 构建
-
-```bash
-docker build -t fffattiger/nocturne-memory-backend:recallcue-20260325-230834 ./backend
-docker build -t fffattiger/nocturne-memory-frontend:plugin-20260325-180901 ./frontend
-```
-
-### 推送
-
-```bash
-echo "$DOCKER_HUB_TOKEN" | docker login -u fffattiger --password-stdin
-docker push fffattiger/nocturne-memory-backend:recallcue-20260325-230834
-docker push fffattiger/nocturne-memory-frontend:plugin-20260325-180901
-```
-
-## OpenClaw 插件接入
-
-把 `plugin/` 作为本地插件目录接入 OpenClaw，然后在 OpenClaw 配置里加载它。
-
-示例：
+Load it from your OpenClaw config and point it at the Nocturne backend:
 
 ```json
 {
@@ -240,7 +168,16 @@ docker push fffattiger/nocturne-memory-frontend:plugin-20260325-180901
           "timeoutMs": 30000,
           "defaultDomain": "core",
           "injectPromptGuidance": true,
-          "startupHealthcheck": true
+          "startupHealthcheck": true,
+          "recallEnabled": true,
+          "embeddingBaseUrl": "http://127.0.0.1:8090/v1",
+          "embeddingApiKey": "YOUR_API_KEY",
+          "embeddingModel": "text-embedding-3-large",
+          "minDisplayScore": 0.4,
+          "maxDisplayItems": 3,
+          "scorePrecision": 2,
+          "readNodeDisplayMode": "soft",
+          "excludeBootFromResults": false
         }
       }
     }
@@ -248,105 +185,109 @@ docker push fffattiger/nocturne-memory-frontend:plugin-20260325-180901
 }
 ```
 
-如果你要启用 recall，可以补这些配置：
+The plugin currently exposes a focused day-to-day tool surface:
 
-```json
-{
-  "baseUrl": "http://127.0.0.1:18901",
-  "recallEnabled": true,
-  "embeddingBaseUrl": "http://127.0.0.1:8090/v1",
-  "embeddingApiKey": "YOUR_API_KEY",
-  "embeddingModel": "text-embedding-3-large",
-  "minDisplayScore": 0.4,
-  "maxDisplayItems": 3,
-  "scorePrecision": 2,
-  "readNodeDisplayMode": "soft"
-}
+- `nocturne_status`
+- `nocturne_boot`
+- `nocturne_get_node`
+- `nocturne_search`
+- `nocturne_list_domains`
+- `nocturne_create_node`
+- `nocturne_update_node`
+- `nocturne_delete_node`
+- `nocturne_add_alias`
+- `nocturne_manage_triggers`
+- `nocturne_get_glossary`
+- `nocturne_add_glossary`
+- `nocturne_remove_glossary`
+- `nocturne_list_session_reads`
+- `nocturne_clear_session_reads`
+
+The backend and web UI still include review and maintenance flows, but those are intentionally not part of the everyday public plugin tool surface.
+
+## Recall model
+
+Recall data is stored in PostgreSQL in the `recall_documents` table.
+
+The current recall pipeline is designed around compact cue cards rather than long body previews. In practice that means embeddings are built from things like:
+
+- URI
+- title or name
+- glossary bindings
+- path tokens
+- short disclosure hints
+
+This keeps recall focused on retrievability instead of dumping large content previews into the embedding input.
+
+## Docker images
+
+The compose file supports image overrides.
+
+Default image variables:
+
+```env
+NOCTURNE_POSTGRES_IMAGE=pgvector/pgvector:pg16
+NOCTURNE_BACKEND_IMAGE=fffattiger/nocturne-memory-backend:recallcue-20260325-230834
+NOCTURNE_FRONTEND_IMAGE=fffattiger/nocturne-memory-frontend:plugin-20260325-180901
 ```
 
-## recall 现在怎么存
+To use published images directly:
 
-recall 索引会写到 PostgreSQL 的 `recall_documents` 表里。
+```bash
+docker compose pull
+docker compose up -d
+```
 
-关键点：
+A Portainer-oriented example deployment is included in `docker-compose.portainer.yml`.
 
-- 文本元数据还在普通列里
-- embedding 改为 `pgvector` 的 `vector` 列
-- 查询时直接在 PostgreSQL 内做向量相似度排序
-- session read tracking 仍然走普通关系表
-- 当前 recall 的 embedding 输入已经从“大段正文预览”改成“短 cue 卡片”：优先使用 URI、name、glossary、path token、少量 disclosure hint，而不是整段正文
+## Useful pages and endpoints
 
-## Plugin Lab 页面
+Web UI:
 
-前端现在带一个 `/plugin` 页面，用来直接测试 plugin 的主要能力。
+- `/` — main app
+- `/plugin` — Plugin Lab for integration checks
+- `/review` — review interface
+- `/maintenance` — maintenance UI
 
-目前包含：
+Backend:
 
-- health / boot / domains
-- get node / search
-- create / update / delete node
-- alias / triggers / glossary
-- session read
-- review / orphan maintenance
-- recall 与 recall index rebuild
+- `/health` — service health
+- `/docs` — FastAPI docs
+- `/browse/*` — browse and memory operations
+- `/review/*` — review operations
+- `/maintenance/*` — maintenance endpoints
 
-如果你是在本机开发，前端起起来后直接打开：
+## Testing
 
-- `http://127.0.0.1:18902/plugin`
+Backend tests prefer PostgreSQL.
 
-## 测试
+- If `TEST_DATABASE_URL` is set, tests use that database.
+- Otherwise the test suite can start a temporary `pgvector/pgvector:pg16` container.
 
-后端测试现在默认使用 PostgreSQL。
-
-优先顺序：
-
-1. 如果设置了 `TEST_DATABASE_URL`，直接使用它
-2. 如果没设，测试会尝试自动起一个临时 `pgvector/pgvector:pg16` Docker 容器
-
-运行：
+Run:
 
 ```bash
 cd backend
 pytest
 ```
 
-## 当前本地部署参考
+## What is not included
 
-典型端口：
+This repository intentionally does not ship:
 
-- backend: `18901`
-- frontend: `18902`
+- real database contents
+- real `.env` values
+- tokens or API keys
+- frontend build output
+- Python virtual environments
+- production logs
 
-常见链路：
+## Upstream and license
 
-```text
-Browser -> Next.js frontend (18902) -> /api/[...path] proxy -> FastAPI backend (18901)
-OpenClaw plugin -> REST API -> FastAPI backend (18901)
-```
+The backend and frontend foundation came from the upstream project:
 
-## 不包含的内容
+- https://github.com/Dataojitori/nocturne_memory
 
-这个公开仓库故意不包含：
+Upstream is MIT-licensed, and this repository keeps the upstream `LICENSE`.
 
-- 实际数据库数据
-- `.env` 真值
-- token / key
-- `node_modules/`
-- `.next/`
-- Python 虚拟环境
-- 线上日志
-
-## 兼容与注意事项
-
-1. 这个仓库以自托管为主。
-2. 生产环境请自己补：反向代理、HTTPS、访问控制、数据库备份。
-3. `pgvector` 扩展是必需项。
-4. 仓库里的端口只是默认值，不是协议要求。
-
-## 致谢
-
-感谢上游项目提供基础实现：
-
-- `Dataojitori/nocturne_memory`
-
-本仓库在其基础上做了 OpenClaw 相关的二次开发与仓库结构整理。
+This fork reorganizes and extends that base for OpenClaw-oriented self-hosting.
