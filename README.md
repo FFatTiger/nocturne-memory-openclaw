@@ -1,67 +1,85 @@
 # Nocturne Memory for OpenClaw
 
-Nocturne Memory for OpenClaw is a PostgreSQL-first Nocturne distribution that packages three pieces in one repository:
+Nocturne Memory for OpenClaw is a self-hosted Nocturne distribution built as a **single Next.js SSR app** for both UI and server API, plus a local OpenClaw plugin.
 
-- a **FastAPI backend** for the Nocturne memory graph
-- a **Next.js frontend** for browsing and operating the graph
-- a **local OpenClaw plugin** that talks to the backend over REST
+This repository is for OpenClaw deployments that want one web service talking directly to PostgreSQL, without a separate Python backend in the runtime path.
 
-This repo is meant for self-hosted OpenClaw deployments. It keeps the memory service, web UI, and plugin integration in one place so you can run the full stack without MCP bridging or a split codebase.
+## What this repo contains
 
-## What this fork focuses on
+- `web/` — the Next.js app
+  - UI pages
+  - server-side API routes under `/api/*`
+  - PostgreSQL access layer
+  - recall, review, and maintenance logic
+- `openclaw-plugin/` — the local OpenClaw plugin that talks to the web app over HTTP
+- `docker-compose.yml` — default self-hosted stack
+- `docker-compose.portainer.yml` — Portainer-oriented deployment example
 
-This is not a mirror of the upstream repository. It is a focused integration fork for the OpenClaw workflow.
-
-Key differences:
-
-- **REST-based OpenClaw integration** via `plugin/`
-- **PostgreSQL-only** storage
-- **pgvector-backed recall** stored in the same database
-- **Next.js proxy frontend** so the browser can talk to the backend through the web app
-- **session-read tracking** and **recall injection** for OpenClaw
-- a built-in **Plugin Lab** page for testing integration flows
-
-## Architecture
+## Current architecture
 
 ```text
-OpenClaw ──local plugin──> FastAPI backend ──> PostgreSQL + pgvector
+OpenClaw ──local plugin──> Next.js SSR app (/api/*) ──> PostgreSQL + pgvector
    │
    └──── optional recall injection
 
-Browser ──> Next.js frontend ──> /api/[...path] proxy ──> FastAPI backend
+Browser ──> Next.js SSR app
 ```
 
 Current stack:
 
-- **Backend:** FastAPI
-- **Frontend:** Next.js 14
+- **App runtime:** Next.js 14
 - **Database:** PostgreSQL
 - **Vector search:** `pgvector`
 - **Full-text search:** PostgreSQL FTS
-- **Plugin transport:** REST API
+- **Plugin transport:** REST API to the Next.js app
+
+## What changed from the earlier layout
+
+This repo used to be split into a frontend and a Python backend.
+
+That is no longer the runtime model.
+
+Current direction:
+
+- the old `frontend/` layout has been reorganized into `web/`
+- the old `plugin/` directory has been renamed to `openclaw-plugin/`
+- the UI and API now run in the same Next.js service
+- the OpenClaw plugin now targets the web service and uses `/api/*` routes
+- the old Python backend has been removed from the active project layout
 
 ## Repository layout
 
 ```text
 .
-├── backend/                   # FastAPI backend
-├── frontend/                  # Next.js frontend
-├── plugin/                    # Local OpenClaw plugin
+├── web/                       # Next.js app (UI + server API)
+├── openclaw-plugin/           # Local OpenClaw plugin
 ├── docker-compose.yml         # Default self-hosted stack
 ├── docker-compose.portainer.yml
 ├── .env.example
 └── README.md
 ```
 
+Inside `web/`, the structure is intentionally flattened:
+
+```text
+web/
+├── app/                       # Next.js app router pages and API routes
+├── components/                # Shared UI components
+├── lib/                       # Client/shared helpers
+├── server/                    # Server-side DB/auth/service code
+├── public/
+├── package.json
+└── Dockerfile
+```
+
 ## Requirements
 
-For the default deployment path:
+For normal deployment:
 
 - Docker + Docker Compose
 
 For local development:
 
-- Python 3.11+
 - Node.js 18+
 - PostgreSQL with the `vector` extension available
 
@@ -73,25 +91,28 @@ For local development:
 cp .env.example .env
 ```
 
-Important variables:
+Example root config:
 
 ```env
 POSTGRES_DB=nocturne
 POSTGRES_USER=nocturne
 POSTGRES_PASSWORD=change-me
-DATABASE_URL=postgresql+asyncpg://nocturne:change-me@postgres:5432/nocturne
+POSTGRES_PORT=5432
+DATABASE_URL=postgresql://nocturne:change-me@postgres:5432/nocturne
 API_TOKEN=your-token-if-needed
-BACKEND_PORT=18901
 FRONTEND_PORT=18902
+CORE_MEMORY_URIS=core://agent,preferences://user,core://workflow
+NOCTURNE_POSTGRES_IMAGE=pgvector/pgvector:pg16
+NOCTURNE_FRONTEND_IMAGE=fffattiger/nocturne-memory-frontend:ssr-20260326-1022-amd64
 ```
 
 Notes:
 
 - `pgvector` is required.
 - `API_TOKEN` is optional, but recommended outside local development.
-- `/health` is intentionally left unauthenticated for health checks.
+- the app health endpoint is `/api/health`
 
-### 2. Start the full stack with Docker
+### 2. Start the stack
 
 ```bash
 docker compose up -d --build
@@ -100,47 +121,38 @@ docker compose up -d --build
 Default exposed ports:
 
 - PostgreSQL: `5432`
-- backend: `18901`
-- frontend: `18902`
+- web app: `18902`
 
 After startup:
 
-- backend health: `http://127.0.0.1:18901/health`
-- backend docs: `http://127.0.0.1:18901/docs`
-- frontend: `http://127.0.0.1:18902`
+- app health: `http://127.0.0.1:18902/api/health`
+- main UI: `http://127.0.0.1:18902`
 - Plugin Lab: `http://127.0.0.1:18902/plugin`
 
 ## Local development
 
-### Backend
+### Web app
 
 ```bash
-cd backend
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python -m uvicorn main:app --host 0.0.0.0 --port 18901 --app-dir .
-```
-
-### Frontend
-
-```bash
-cd frontend
+cd web
 cp .env.local.example .env.local
 npm install
 npm run dev
 ```
 
-`frontend/.env.local.example` defaults to:
+`web/.env.local.example` defaults to:
 
 ```env
-BACKEND_URL=http://127.0.0.1:18901
+DATABASE_URL=postgresql://nocturne:change-me@127.0.0.1:5432/nocturne
+API_TOKEN=
+CORE_MEMORY_URIS=core://agent,preferences://user,core://workflow
+SNAPSHOT_DIR=./snapshots
 ```
 
-For a production-style frontend run:
+Production-style local run:
 
 ```bash
-cd frontend
+cd web
 npm install
 npm run build
 npm start -- -H 0.0.0.0 -p 18902
@@ -148,23 +160,23 @@ npm start -- -H 0.0.0.0 -p 18902
 
 ## OpenClaw plugin
 
-The local plugin lives in `plugin/`.
+The local plugin lives in `openclaw-plugin/`.
 
-Load it from your OpenClaw config and point it at the Nocturne backend:
+Load it from OpenClaw and point it at the web service base URL:
 
 ```json
 {
   "plugins": {
     "load": {
       "paths": [
-        "/absolute/path/to/plugin"
+        "/absolute/path/to/openclaw-plugin"
       ]
     },
     "entries": {
       "nocturne": {
         "enabled": true,
         "config": {
-          "baseUrl": "http://127.0.0.1:18901",
+          "baseUrl": "http://127.0.0.1:18902",
           "timeoutMs": 30000,
           "defaultDomain": "core",
           "injectPromptGuidance": true,
@@ -185,7 +197,9 @@ Load it from your OpenClaw config and point it at the Nocturne backend:
 }
 ```
 
-The plugin currently exposes a focused day-to-day tool surface:
+The plugin targets `/api/*` on the configured base URL internally, so the configured `baseUrl` should be the web app origin, not an old backend route prefix.
+
+Current day-to-day tool surface:
 
 - `nocturne_status`
 - `nocturne_boot`
@@ -203,13 +217,35 @@ The plugin currently exposes a focused day-to-day tool surface:
 - `nocturne_list_session_reads`
 - `nocturne_clear_session_reads`
 
-The backend and web UI still include review and maintenance flows, but those are intentionally not part of the everyday public plugin tool surface.
+The app also includes recall, review, and maintenance flows used by the web UI and plugin integration.
+
+## API surface
+
+Main routes now live under `/api/*`.
+
+Useful endpoints:
+
+- `/api/health`
+- `/api/browse/domains`
+- `/api/browse/node`
+- `/api/browse/search`
+- `/api/browse/boot`
+- `/api/browse/alias`
+- `/api/browse/glossary`
+- `/api/browse/triggers`
+- `/api/browse/session/read`
+- `/api/browse/recall`
+- `/api/browse/recall/rebuild`
+- `/api/review/*`
+- `/api/maintenance/*`
+
+The legacy catch-all API proxy is intentionally disabled.
 
 ## Recall model
 
 Recall data is stored in PostgreSQL in the `recall_documents` table.
 
-The current recall pipeline is designed around compact cue cards rather than long body previews. In practice that means embeddings are built from things like:
+The current recall pipeline is built around compact cue cards instead of long body previews. Embedding inputs are derived mainly from:
 
 - URI
 - title or name
@@ -217,18 +253,15 @@ The current recall pipeline is designed around compact cue cards rather than lon
 - path tokens
 - short disclosure hints
 
-This keeps recall focused on retrievability instead of dumping large content previews into the embedding input.
+This keeps retrieval focused on recall quality instead of stuffing whole documents into the embedding payload.
 
 ## Docker images
-
-The compose file supports image overrides.
 
 Default image variables:
 
 ```env
 NOCTURNE_POSTGRES_IMAGE=pgvector/pgvector:pg16
-NOCTURNE_BACKEND_IMAGE=fffattiger/nocturne-memory-backend:recallcue-20260325-230834
-NOCTURNE_FRONTEND_IMAGE=fffattiger/nocturne-memory-frontend:plugin-20260325-180901
+NOCTURNE_FRONTEND_IMAGE=fffattiger/nocturne-memory-frontend:ssr-20260326-1022-amd64
 ```
 
 To use published images directly:
@@ -240,35 +273,21 @@ docker compose up -d
 
 A Portainer-oriented example deployment is included in `docker-compose.portainer.yml`.
 
-## Useful pages and endpoints
-
-Web UI:
-
-- `/` — main app
-- `/plugin` — Plugin Lab for integration checks
-- `/review` — review interface
-- `/maintenance` — maintenance UI
-
-Backend:
-
-- `/health` — service health
-- `/docs` — FastAPI docs
-- `/browse/*` — browse and memory operations
-- `/review/*` — review operations
-- `/maintenance/*` — maintenance endpoints
-
 ## Testing
 
-Backend tests prefer PostgreSQL.
-
-- If `TEST_DATABASE_URL` is set, tests use that database.
-- Otherwise the test suite can start a temporary `pgvector/pgvector:pg16` container.
-
-Run:
+Basic sanity checks:
 
 ```bash
-cd backend
-pytest
+curl http://127.0.0.1:18902/api/health
+curl http://127.0.0.1:18902/api/browse/domains
+curl 'http://127.0.0.1:18902/api/browse/node?domain=core&path=agent'
+```
+
+Build check:
+
+```bash
+cd web
+npm run build
 ```
 
 ## What is not included
@@ -278,16 +297,15 @@ This repository intentionally does not ship:
 - real database contents
 - real `.env` values
 - tokens or API keys
-- frontend build output
-- Python virtual environments
+- build output
 - production logs
 
 ## Upstream and license
 
-The backend and frontend foundation came from the upstream project:
+The original project foundation came from:
 
 - https://github.com/Dataojitori/nocturne_memory
 
 Upstream is MIT-licensed, and this repository keeps the upstream `LICENSE`.
 
-This fork reorganizes and extends that base for OpenClaw-oriented self-hosting.
+This fork restructures that base into a Next.js-first OpenClaw deployment focused on a single web runtime plus plugin integration.

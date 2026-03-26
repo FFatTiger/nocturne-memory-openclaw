@@ -23,8 +23,6 @@ state/
 *.db-*
 *.bak
 snapshots/
-backend/backups/
-backend/snapshots/
 
 # OS / editor
 .DS_Store
