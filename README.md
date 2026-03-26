@@ -199,7 +199,7 @@ Load it from OpenClaw and point it at the web service base URL:
 
 The plugin targets `/api/*` on the configured base URL internally, so the configured `baseUrl` should be the web app origin, not an old backend route prefix.
 
-Current day-to-day tool surface:
+Current day-to-day tool surface (11 tools):
 
 - `nocturne_status`
 - `nocturne_boot`
@@ -210,10 +210,6 @@ Current day-to-day tool surface:
 - `nocturne_update_node`
 - `nocturne_delete_node`
 - `nocturne_add_alias`
-- `nocturne_manage_triggers`
-- `nocturne_get_glossary`
-- `nocturne_add_glossary`
-- `nocturne_remove_glossary`
 - `nocturne_list_session_reads`
 - `nocturne_clear_session_reads`
 
