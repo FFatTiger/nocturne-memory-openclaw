@@ -195,6 +195,41 @@ function normalizeGlossaryEntries(data) {
   return Array.from(grouped.values()).sort((a, b) => a.keyword.localeCompare(b.keyword));
 }
 
+function normalizeKeywordList(values) {
+  if (!Array.isArray(values)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const value of values) {
+    const keyword = String(value || "").trim();
+    if (!keyword) continue;
+    const key = keyword.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(keyword);
+  }
+  return out;
+}
+
+async function applyGlossaryMutations(pluginCfg, nodeUuid, { add = [], remove = [] } = {}) {
+  const added = [];
+  const removed = [];
+  for (const keyword of normalizeKeywordList(add)) {
+    await fetchJson(pluginCfg, "/browse/glossary", {
+      method: "POST",
+      body: JSON.stringify({ keyword, node_uuid: nodeUuid }),
+    });
+    added.push(keyword);
+  }
+  for (const keyword of normalizeKeywordList(remove)) {
+    await fetchJson(pluginCfg, "/browse/glossary", {
+      method: "DELETE",
+      body: JSON.stringify({ keyword, node_uuid: nodeUuid }),
+    });
+    removed.push(keyword);
+  }
+  return { added, removed };
+}
+
 function hasRecallConfig(pluginCfg) {
   return Boolean(pluginCfg.recallEnabled && pluginCfg.embeddingBaseUrl && pluginCfg.embeddingApiKey && pluginCfg.embeddingModel);
 }
@@ -409,7 +444,8 @@ export default function register(api) {
         content: { type: "string" },
         priority: { type: "integer", minimum: 0 },
         title: { type: "string" },
-        disclosure: { type: "string" }
+        disclosure: { type: "string" },
+        glossary: { type: "array", items: { type: "string" } }
       }
     },
     async execute(_id, params) {
@@ -419,13 +455,19 @@ export default function register(api) {
         content: String(params?.content || ""),
         priority: Number(params?.priority),
       };
+      const glossary = normalizeKeywordList(params?.glossary);
       if (typeof params?.title === "string") body.title = params.title;
       if (typeof params?.disclosure === "string") body.disclosure = params.disclosure;
       try {
         const data = await fetchJson(pluginCfg, `/browse/node`, { method: "POST", body: JSON.stringify(body) });
-        return textResult(`Created ${data?.uri || `${body.domain}://${body.parent_path}`}`, { ok: true, result: data });
+        const nodeUuid = String(data?.node_uuid || "").trim();
+        const glossaryResult = nodeUuid && glossary.length > 0
+          ? await applyGlossaryMutations(pluginCfg, nodeUuid, { add: glossary })
+          : { added: [], removed: [] };
+        const suffix = glossaryResult.added.length > 0 ? `\nGlossary: ${glossaryResult.added.join(", ")}` : "";
+        return textResult(`Created ${data?.uri || `${body.domain}://${body.parent_path}`}${suffix}`, { ok: true, result: data, glossary: glossaryResult });
       } catch (error) {
-        return textResult(`Nocturne create failed: ${error.message}`, { ok: false, error: error.message, body });
+        return textResult(`Nocturne create failed: ${error.message}`, { ok: false, error: error.message, body, glossary });
       }
     },
   });
@@ -443,22 +485,37 @@ export default function register(api) {
         path: { type: "string" },
         content: { type: "string" },
         priority: { type: "integer", minimum: 0 },
-        disclosure: { type: "string" }
+        disclosure: { type: "string" },
+        glossary_add: { type: "array", items: { type: "string" } },
+        glossary_remove: { type: "array", items: { type: "string" } }
       }
     },
     async execute(_id, params) {
       const domain = typeof params?.domain === "string" && params.domain.trim() ? params.domain.trim() : pluginCfg.defaultDomain;
       const path = String(params?.path || "").trim();
       const body = {};
+      const glossaryAdd = normalizeKeywordList(params?.glossary_add);
+      const glossaryRemove = normalizeKeywordList(params?.glossary_remove);
       if (typeof params?.content === "string") body.content = params.content;
       if (Number.isFinite(params?.priority)) body.priority = params.priority;
       if (typeof params?.disclosure === "string") body.disclosure = params.disclosure;
       try {
         const qs = new URLSearchParams({ domain, path });
         const data = await fetchJson(pluginCfg, `/browse/node?${qs.toString()}`, { method: "PUT", body: JSON.stringify(body) });
-        return textResult(`Updated ${domain}://${path}`, { ok: true, result: data });
+        let glossaryResult = { added: [], removed: [] };
+        if (glossaryAdd.length > 0 || glossaryRemove.length > 0) {
+          const nodeData = await fetchJson(pluginCfg, `/browse/node?${qs.toString()}`, { method: "GET" });
+          const nodeUuid = String(nodeData?.node?.node_uuid || "").trim();
+          if (!nodeUuid) throw new Error(`Node UUID not found for ${domain}://${path}`);
+          glossaryResult = await applyGlossaryMutations(pluginCfg, nodeUuid, { add: glossaryAdd, remove: glossaryRemove });
+        }
+        const suffixParts = [];
+        if (glossaryResult.added.length > 0) suffixParts.push(`glossary+ ${glossaryResult.added.join(", ")}`);
+        if (glossaryResult.removed.length > 0) suffixParts.push(`glossary- ${glossaryResult.removed.join(", ")}`);
+        const suffix = suffixParts.length > 0 ? `\n${suffixParts.join("\n")}` : "";
+        return textResult(`Updated ${domain}://${path}${suffix}`, { ok: true, result: data, glossary: glossaryResult });
       } catch (error) {
-        return textResult(`Nocturne update failed: ${error.message}`, { ok: false, error: error.message, domain, path });
+        return textResult(`Nocturne update failed: ${error.message}`, { ok: false, error: error.message, domain, path, glossary_add: glossaryAdd, glossary_remove: glossaryRemove });
       }
     },
   });
