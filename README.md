@@ -224,7 +224,7 @@ Useful endpoints:
 - `/api/health`
 - `/api/browse/domains`
 - `/api/browse/node`
-- `/api/browse/search`
+- `/api/browse/search` (GET = lexical search, POST = optional hybrid search with embedding)
 - `/api/browse/boot`
 - `/api/browse/alias`
 - `/api/browse/glossary`
@@ -241,7 +241,12 @@ The legacy catch-all API proxy is intentionally disabled.
 
 Recall data is stored in PostgreSQL in the `recall_documents` table.
 
-The current recall pipeline is built around compact cue cards instead of long body previews. Embedding inputs are derived mainly from:
+Search is now split into two layers:
+
+- lexical search: weighted PostgreSQL FTS over name/path/glossary/disclosure/content, plus exact-match boosts for URI/path/name/glossary/disclosure
+- optional hybrid search: lexical candidates merged with semantic candidates from the current vector index, then reranked
+
+The current semantic index is still built around compact cue cards instead of long body previews. Embedding inputs are derived mainly from:
 
 - URI
 - title or name

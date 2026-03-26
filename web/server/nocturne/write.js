@@ -16,6 +16,36 @@ async function getPathContext(client, domain, path) {
   return result.rows[0] || null;
 }
 
+const PATH_SEGMENT_RE = /^[a-z0-9]+(?:_[a-z0-9]+)*$/;
+
+function assertValidPathSegment(value, label = 'path segment') {
+  const segment = String(value || '').trim();
+  if (!segment) {
+    const error = new Error(`${label} is required`);
+    error.status = 422;
+    throw error;
+  }
+  if (!PATH_SEGMENT_RE.test(segment)) {
+    const error = new Error(`${label} must use snake_case ASCII only (lowercase letters, digits, underscores; no Chinese, spaces, or hyphens)`);
+    error.status = 422;
+    throw error;
+  }
+  return segment;
+}
+
+function assertValidPathSegments(path, label = 'path') {
+  const segments = String(path || '').split('/').map((segment) => segment.trim()).filter(Boolean);
+  if (!segments.length) {
+    const error = new Error(`${label} must include at least one path segment`);
+    error.status = 422;
+    throw error;
+  }
+  for (const segment of segments) {
+    assertValidPathSegment(segment, label);
+  }
+  return segments;
+}
+
 export async function updateNodeByPath({ domain = 'core', path, content, priority, disclosure }) {
   const client = await getPool().connect();
   try {
@@ -108,6 +138,7 @@ export async function createNode({ domain = 'core', parentPath = '', content, pr
       }
       name = String(maxNum + 1);
     }
+    name = assertValidPathSegment(name, 'title/path segment');
 
     const childUuid = crypto.randomUUID();
     await client.query(`INSERT INTO nodes (uuid, created_at) VALUES ($1, NOW())`, [childUuid]);
@@ -149,12 +180,7 @@ function parseUri(uri) {
 export async function addAlias({ newUri, targetUri, priority = 0, disclosure = null }) {
   const target = parseUri(targetUri);
   const alias = parseUri(newUri);
-  const aliasSegments = alias.path.split('/').filter(Boolean);
-  if (!aliasSegments.length) {
-    const error = new Error('new_uri must include a path');
-    error.status = 422;
-    throw error;
-  }
+  const aliasSegments = assertValidPathSegments(alias.path, 'new_uri path');
 
   const parentPath = aliasSegments.slice(0, -1).join('/');
   const name = aliasSegments[aliasSegments.length - 1];

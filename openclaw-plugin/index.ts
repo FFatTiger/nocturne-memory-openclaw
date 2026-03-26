@@ -379,16 +379,42 @@ export default function register(api) {
     },
     async execute(_id, params) {
       const query = String(params?.query || "").trim();
-      const qs = new URLSearchParams({ query });
-      if (typeof params?.domain === "string" && params.domain.trim()) qs.set("domain", params.domain.trim());
-      if (Number.isFinite(params?.limit)) qs.set("limit", String(Math.max(1, Math.min(100, params.limit))));
+      const safeLimit = Number.isFinite(params?.limit) ? Math.max(1, Math.min(100, params.limit)) : 10;
       try {
-        const data = await fetchJson(pluginCfg, `/browse/search?${qs.toString()}`, { method: "GET" });
+        let data;
+        if (hasRecallConfig(pluginCfg)) {
+          data = await fetchJson(pluginCfg, `/browse/search`, {
+            method: "POST",
+            body: JSON.stringify({
+              query,
+              domain: typeof params?.domain === "string" && params.domain.trim() ? params.domain.trim() : null,
+              limit: safeLimit,
+              embedding: {
+                base_url: pluginCfg.embeddingBaseUrl,
+                api_key: pluginCfg.embeddingApiKey,
+                model: pluginCfg.embeddingModel,
+              },
+              hybrid: true,
+            }),
+          });
+        } else {
+          const qs = new URLSearchParams({ query });
+          if (typeof params?.domain === "string" && params.domain.trim()) qs.set("domain", params.domain.trim());
+          qs.set("limit", String(safeLimit));
+          data = await fetchJson(pluginCfg, `/browse/search?${qs.toString()}`, { method: "GET" });
+        }
         const results = normalizeSearchResults(data);
+        const meta = data?.meta || null;
         const text = results.length > 0
-          ? results.map((item, idx) => `${idx + 1}. ${item.uri} (priority: ${item.priority})\n   ${item.snippet}`).join("\n")
+          ? results.map((item, idx) => {
+              const parts = [`${idx + 1}. ${item.uri} (priority: ${item.priority}`];
+              if (typeof item?.score === "number") parts.push(`score: ${item.score.toFixed(3)}`);
+              if (Array.isArray(item?.matched_on) && item.matched_on.length > 0) parts.push(`via: ${item.matched_on.join("+")}`);
+              return `${parts.join(", ")})\n   ${item.snippet}`;
+            }).join("\n")
           : "No matching memories found.";
-        return textResult(text, { ok: true, results });
+        const suffix = meta?.semantic_error ? `\n\nSemantic fallback skipped: ${meta.semantic_error}` : "";
+        return textResult(`${text}${suffix}`, { ok: true, results, meta });
       } catch (error) {
         return textResult(`Nocturne search failed: ${error.message}`, { ok: false, error: error.message, query });
       }
@@ -416,7 +442,7 @@ export default function register(api) {
   api.registerTool({
     name: "nocturne_create_node",
     label: "Nocturne create node",
-    description: "Create a Nocturne memory node through the backend browse API.",
+    description: "Create a Nocturne memory node through the backend browse API. If title is provided, it becomes the final path segment and must be snake_case ASCII (lowercase letters, digits, underscores only; no Chinese).",
     parameters: {
       type: "object",
       additionalProperties: false,
@@ -426,7 +452,7 @@ export default function register(api) {
         parent_path: { type: "string" },
         content: { type: "string" },
         priority: { type: "integer", minimum: 0 },
-        title: { type: "string" },
+        title: { type: "string", description: "Final path segment. Must use snake_case ASCII only." },
         disclosure: { type: "string" },
         glossary: { type: "array", items: { type: "string" } }
       }
@@ -532,13 +558,13 @@ export default function register(api) {
   api.registerTool({
     name: "nocturne_add_alias",
     label: "Nocturne add alias",
-    description: "Create an alias URI for an existing Nocturne memory.",
+    description: "Create an alias URI for an existing Nocturne memory. new_uri path must use snake_case ASCII only (lowercase letters, digits, underscores; no Chinese).",
     parameters: {
       type: "object",
       additionalProperties: false,
       required: ["new_uri", "target_uri"],
       properties: {
-        new_uri: { type: "string" },
+        new_uri: { type: "string", description: "Alias URI. Path segments must be snake_case ASCII only." },
         target_uri: { type: "string" },
         priority: { type: "integer", minimum: 0 },
         disclosure: { type: "string" }

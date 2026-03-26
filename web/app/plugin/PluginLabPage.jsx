@@ -365,6 +365,7 @@ export default function PluginLabPage() {
     model: form.recallEmbeddingModel.trim(),
     timeout_ms: asNumber(form.recallEmbeddingTimeoutMs, 30000),
   };
+  const searchHybridEnabled = Boolean(recallEmbedding.base_url && recallEmbedding.api_key && recallEmbedding.model);
 
   const runGetNode = () =>
     runAction({
@@ -519,16 +520,39 @@ export default function PluginLabPage() {
                   onClick={() =>
                     runAction({
                       label: 'Search',
-                      request: () => ({
-                        method: 'GET',
-                        path: '/browse/search',
-                        params: {
-                          query: form.searchQuery,
-                          domain: form.searchDomain || undefined,
-                          limit: asNumber(form.searchLimit, 10),
-                        },
-                      }),
+                      request: () =>
+                        searchHybridEnabled
+                          ? {
+                              method: 'POST',
+                              path: '/browse/search',
+                              body: {
+                                query: form.searchQuery,
+                                domain: form.searchDomain || undefined,
+                                limit: asNumber(form.searchLimit, 10),
+                                hybrid: true,
+                                embedding: recallEmbedding,
+                              },
+                            }
+                          : {
+                              method: 'GET',
+                              path: '/browse/search',
+                              params: {
+                                query: form.searchQuery,
+                                domain: form.searchDomain || undefined,
+                                limit: asNumber(form.searchLimit, 10),
+                              },
+                            },
                       run: async () => {
+                        if (searchHybridEnabled) {
+                          const { data } = await api.post('/browse/search', {
+                            query: form.searchQuery,
+                            domain: form.searchDomain || undefined,
+                            limit: asNumber(form.searchLimit, 10),
+                            hybrid: true,
+                            embedding: recallEmbedding,
+                          });
+                          return data;
+                        }
                         const { data } = await api.get('/browse/search', {
                           params: {
                             query: form.searchQuery,

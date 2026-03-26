@@ -1,5 +1,7 @@
 import crypto from 'crypto';
 import { sql } from '../db';
+import { loadNormalizedDocuments } from './retrieval';
+import { embedTexts, vectorLiteral } from './embeddings';
 
 const EXACT_DISCLOSURE_TOKENS = [
   '偏好', '规则', '项目', '微信', 'browser', 'OpenClaw', 'Nocturne', '回滚',
@@ -49,76 +51,21 @@ function hashPayload(payload) {
   return crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex');
 }
 
-function vectorLiteral(value) {
-  if (Array.isArray(value)) return `[${value.map((item) => Number(item)).join(',')}]`;
-  return String(value || '[]');
-}
-
-async function embedTexts(embedding, inputs) {
-  const results = [];
-  for (const text of inputs) {
-    const response = await fetch(`${String(embedding.base_url || '').replace(/\/$/, '')}/embeddings`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${embedding.api_key}`,
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ model: embedding.model, input: text }),
-    });
-    if (!response.ok) {
-      throw new Error(`Embedding request failed: ${response.status}`);
-    }
-    const data = await response.json();
-    const rows = [...(data.data || [])].sort((a, b) => (a.index || 0) - (b.index || 0));
-    if (!rows[0]?.embedding) throw new Error('Embedding response missing data rows');
-    results.push(rows[0].embedding);
-  }
-  return results;
-}
 
 async function loadSourceDocuments() {
-  const result = await sql(
-    `
-      SELECT p.domain, p.path, e.child_uuid AS node_uuid, e.priority, e.disclosure, m.id AS memory_id, m.content
-      FROM paths p
-      JOIN edges e ON p.edge_id = e.id
-      JOIN LATERAL (
-        SELECT id, content
-        FROM memories
-        WHERE node_uuid = e.child_uuid AND deprecated = FALSE
-        ORDER BY created_at DESC
-        LIMIT 1
-      ) m ON TRUE
-      ORDER BY p.domain, p.path
-    `,
-  );
-  if (!result.rows.length) return [];
-
-  const nodeUuids = [...new Set(result.rows.map((row) => row.node_uuid))];
-  const glossaryResult = await sql(
-    `SELECT node_uuid, keyword FROM glossary_keywords WHERE node_uuid = ANY($1::text[]) ORDER BY node_uuid, keyword`,
-    [nodeUuids],
-  );
-  const glossaryMap = new Map();
-  for (const row of glossaryResult.rows) {
-    const list = glossaryMap.get(row.node_uuid) || [];
-    list.push(row.keyword);
-    glossaryMap.set(row.node_uuid, list);
-  }
-
-  return result.rows.map((row) => {
+  const rows = await loadNormalizedDocuments();
+  return rows.map((row) => {
     const doc = {
       domain: row.domain,
       path: row.path,
       node_uuid: row.node_uuid,
       memory_id: row.memory_id,
-      uri: `${row.domain}://${row.path}`,
-      name: row.path ? row.path.split('/').pop() : 'root',
+      uri: row.uri,
+      name: row.name,
       priority: row.priority || 0,
       disclosure: row.disclosure || '',
-      glossary_keywords: glossaryMap.get(row.node_uuid) || [],
-      body_preview: truncate(row.content, 900),
+      glossary_keywords: row.glossary_keywords || [],
+      body_preview: truncate(row.latest_content, 900),
     };
     doc.cue_text = buildCueText(doc);
     doc.embedding_text = buildEmbeddingText(doc);
