@@ -178,23 +178,6 @@ function normalizeSearchResults(data) {
   return [];
 }
 
-function normalizeGlossaryEntries(data) {
-  const raw = Array.isArray(data?.glossary) ? data.glossary : [];
-  if (raw.length === 0) return [];
-  if (raw.some((item) => Array.isArray(item?.nodes))) return raw;
-
-  const grouped = new Map();
-  for (const item of raw) {
-    const keyword = String(item?.keyword || "").trim();
-    if (!keyword) continue;
-    const bucket = grouped.get(keyword) || { keyword, nodes: [] };
-    const nodeUuid = String(item?.node_uuid || "").trim();
-    if (nodeUuid) bucket.nodes.push({ node_uuid: nodeUuid });
-    grouped.set(keyword, bucket);
-  }
-  return Array.from(grouped.values()).sort((a, b) => a.keyword.localeCompare(b.keyword));
-}
-
 function normalizeKeywordList(values) {
   if (!Array.isArray(values)) return [];
   const seen = new Set();
@@ -573,109 +556,6 @@ export default function register(api) {
         return textResult(`Alias created: ${body.new_uri}`, { ok: true, result: data });
       } catch (error) {
         return textResult(`Nocturne add alias failed: ${error.message}`, { ok: false, error: error.message, body });
-      }
-    },
-  });
-
-  api.registerTool({
-    name: "nocturne_manage_triggers",
-    label: "Nocturne manage triggers",
-    description: "Bind or unbind trigger words for a Nocturne memory URI.",
-    parameters: {
-      type: "object",
-      additionalProperties: false,
-      required: ["uri"],
-      properties: {
-        uri: { type: "string" },
-        add: { type: "array", items: { type: "string" } },
-        remove: { type: "array", items: { type: "string" } }
-      }
-    },
-    async execute(_id, params) {
-      const body = { uri: String(params?.uri || "").trim() };
-      if (Array.isArray(params?.add)) body.add = params.add.map((x) => String(x));
-      if (Array.isArray(params?.remove)) body.remove = params.remove.map((x) => String(x));
-      try {
-        const data = await fetchJson(pluginCfg, `/browse/triggers`, { method: "POST", body: JSON.stringify(body) });
-        const current = Array.isArray(data?.current) ? data.current.join(", ") : "";
-        return textResult(`Triggers updated for ${body.uri}${current ? `\nCurrent: ${current}` : ""}`, { ok: true, result: data });
-      } catch (error) {
-        return textResult(`Nocturne manage triggers failed: ${error.message}`, { ok: false, error: error.message, body });
-      }
-    },
-  });
-
-  api.registerTool({
-    name: "nocturne_get_glossary",
-    label: "Nocturne get glossary",
-    description: "Read the Nocturne glossary map.",
-    parameters: { type: "object", additionalProperties: false, properties: {} },
-    async execute() {
-      try {
-        const data = await fetchJson(pluginCfg, "/browse/glossary", { method: "GET" });
-        const glossary = normalizeGlossaryEntries(data);
-        const text = glossary.length > 0
-          ? glossary.map((item) => {
-              const nodes = Array.isArray(item?.nodes) ? item.nodes : [];
-              if (nodes.length === 0) return `- ${item.keyword}: (no linked nodes)`;
-              return `- ${item.keyword}: ${nodes.map((node) => node?.uri || node?.node_uuid || "(unknown node)").join(", ")}`;
-            }).join("\n")
-          : "Glossary is empty.";
-        return textResult(text, { ok: true, glossary });
-      } catch (error) {
-        return textResult(`Nocturne glossary read failed: ${error.message}`, { ok: false, error: error.message });
-      }
-    },
-  });
-
-  api.registerTool({
-    name: "nocturne_add_glossary",
-    label: "Nocturne add glossary",
-    description: "Bind a glossary keyword to a Nocturne node UUID.",
-    parameters: {
-      type: "object",
-      additionalProperties: false,
-      required: ["keyword", "node_uuid"],
-      properties: {
-        keyword: { type: "string" },
-        node_uuid: { type: "string" }
-      }
-    },
-    async execute(_id, params) {
-      try {
-        const data = await fetchJson(pluginCfg, "/browse/glossary", {
-          method: "POST",
-          body: JSON.stringify({ keyword: String(params?.keyword || ""), node_uuid: String(params?.node_uuid || "") }),
-        });
-        return textResult(`Glossary keyword added: ${params.keyword}`, { ok: true, result: data });
-      } catch (error) {
-        return textResult(`Nocturne add glossary failed: ${error.message}`, { ok: false, error: error.message });
-      }
-    },
-  });
-
-  api.registerTool({
-    name: "nocturne_remove_glossary",
-    label: "Nocturne remove glossary",
-    description: "Remove a glossary keyword binding from a Nocturne node UUID.",
-    parameters: {
-      type: "object",
-      additionalProperties: false,
-      required: ["keyword", "node_uuid"],
-      properties: {
-        keyword: { type: "string" },
-        node_uuid: { type: "string" }
-      }
-    },
-    async execute(_id, params) {
-      try {
-        const data = await fetchJson(pluginCfg, "/browse/glossary", {
-          method: "DELETE",
-          body: JSON.stringify({ keyword: String(params?.keyword || ""), node_uuid: String(params?.node_uuid || "") }),
-        });
-        return textResult(`Glossary keyword removed: ${params.keyword}`, { ok: true, result: data });
-      } catch (error) {
-        return textResult(`Nocturne remove glossary failed: ${error.message}`, { ok: false, error: error.message });
       }
     },
   });
