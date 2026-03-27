@@ -514,7 +514,7 @@ export default function register(api) {
     parameters: {
       type: "object",
       additionalProperties: false,
-      required: ["content", "priority"],
+      required: ["content", "priority", "glossary"],
       properties: {
         uri: { type: "string", description: "Optional full target URI like project://workflow/browser_policy. If provided, the plugin derives domain + parent_path + title from it." },
         domain: { type: "string", description: "Domain like core. Optional when `uri` is provided." },
