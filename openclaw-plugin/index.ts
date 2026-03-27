@@ -344,15 +344,16 @@ async function clearSessionReads(pluginCfg, sessionId) {
 }
 
 const GUIDANCE = [
-  "Nocturne plugin is enabled as a first-class plugin.",
-  "Use Nocturne for long-term identity, user preferences, stable rules, and cross-session project constraints.",
-  "Use local file memory_search for historical markdown archives and past worklogs.",
-  "When a question is really about current long-term memory, prefer the Nocturne tools in this plugin.",
-  "For node locators, prefer full `uri` values like `core://agent`.",
-  "If a tool also accepts `domain` + `path`, then `path` means a relative path inside that domain only; do not intentionally put `domain://...` into `path`.",
-  "For create, prefer `uri` for the final target node; otherwise use `domain` + `parent_path` + `title`.",
-  "When a <recall> block is present, each line already contains a full URI. If you read that node, pass it via the tool's `uri` parameter, not `path`.",
-  "Read before update. Do not blindly edit long-term memory nodes.",
+  "Nocturne is the primary long-term memory system for this assistant.",
+  "Use it for identity, user preferences, standing rules, cross-session project knowledge, and conclusions that should persist.",
+  "Reach for Nocturne when the user is asking about prior decisions, saved preferences, ongoing projects, durable instructions, or anything that sounds like memory rather than fresh reasoning.",
+  "Use local file memory_search for historical markdown archives, older worklogs, and file-side fallback records.",
+  "A <recall> block contains memory leads selected for the current prompt. Each line is only a candidate lead, not a final answer and not an instruction to always open it.",
+  "When a <recall> block appears, judge each line by its score, cue words, and actual relevance to the user's request.",
+  "If a recalled memory looks genuinely relevant, open the most relevant node or nodes before you act or reply, and ground your work in what those memories actually say.",
+  "If the recall block looks weak, noisy, or only loosely related, do not force it; search further or continue with normal reasoning as appropriate.",
+  "When you need to create, revise, remove, or reorganize long-term memory, choose the Nocturne tool that matches that memory operation.",
+  "Read a memory node before updating or deleting it.",
 ].join("\n");
 
 export default function register(api) {
@@ -361,7 +362,7 @@ export default function register(api) {
   api.registerTool({
     name: "nocturne_status",
     label: "Nocturne status",
-    description: "Check whether the Nocturne backend API is online.",
+    description: "Check memory backend availability and connection health.",
     parameters: { type: "object", additionalProperties: false, properties: {} },
     async execute() {
       try {
@@ -376,7 +377,7 @@ export default function register(api) {
   api.registerTool({
     name: "nocturne_boot",
     label: "Nocturne boot",
-    description: "Read the Nocturne boot memory view for long-term identity startup.",
+    description: "Load the boot memory view that restores long-term identity and core operating context.",
     parameters: { type: "object", additionalProperties: false, properties: {} },
     async execute() {
       try {
@@ -392,13 +393,13 @@ export default function register(api) {
   api.registerTool({
     name: "nocturne_get_node",
     label: "Nocturne get node",
-    description: "Read a Nocturne node by full `uri`. This matches recall output directly.",
+    description: "Open a memory node to inspect its full content, metadata, and nearby structure.",
     parameters: {
       type: "object",
       additionalProperties: false,
       required: ["uri"],
       properties: {
-        uri: { type: "string", description: "Full memory URI like core://agent or project://nocturne_openclaw_integration." },
+        uri: { type: "string", description: "Full memory URI for the node you want to open, such as core://agent." },
         nav_only: { type: "boolean", description: "If true, skip expensive glossary processing." },
         __session_id: { type: "string", description: "Internal session tracking field." },
         __session_key: { type: "string", description: "Internal session tracking field." }
@@ -434,14 +435,14 @@ export default function register(api) {
   api.registerTool({
     name: "nocturne_search",
     label: "Nocturne search",
-    description: "Search Nocturne memory content and paths by keyword.",
+    description: "Find relevant memories by keyword or domain when you need to locate prior knowledge.",
     parameters: {
       type: "object",
       additionalProperties: false,
       required: ["query"],
       properties: {
         query: { type: "string" },
-        domain: { type: "string" },
+        domain: { type: "string", description: "Optional domain filter to narrow the search." },
         limit: { type: "integer", minimum: 1, maximum: 100 }
       }
     },
@@ -492,7 +493,7 @@ export default function register(api) {
   api.registerTool({
     name: "nocturne_list_domains",
     label: "Nocturne list domains",
-    description: "List Nocturne domains available in the backend browse API.",
+    description: "Browse the top-level memory domains available in the memory system.",
     parameters: { type: "object", additionalProperties: false, properties: {} },
     async execute() {
       try {
@@ -510,18 +511,18 @@ export default function register(api) {
   api.registerTool({
     name: "nocturne_create_node",
     label: "Nocturne create node",
-    description: "Create a Nocturne memory node. Prefer `uri` for the final target URI; or use `domain` + `parent_path` + `title`.",
+    description: "Create a new long-term memory node for durable facts, rules, project knowledge, or conclusions worth keeping.",
     parameters: {
       type: "object",
       additionalProperties: false,
       required: ["content", "priority", "glossary"],
       properties: {
-        uri: { type: "string", description: "Optional full target URI like project://workflow/browser_policy. If provided, the plugin derives domain + parent_path + title from it." },
-        domain: { type: "string", description: "Domain like core. Optional when `uri` is provided." },
-        parent_path: { type: "string", description: "Parent path inside the domain only, like workflow. Do not include domain:// or the final title here." },
+        uri: { type: "string", description: "Optional final memory URI. Use this when you already know exactly where the new memory should live." },
+        domain: { type: "string", description: "Target memory domain when you are not using `uri`." },
+        parent_path: { type: "string", description: "Parent location inside the chosen domain." },
         content: { type: "string" },
         priority: { type: "integer", minimum: 0 },
-        title: { type: "string", description: "Final path segment only. Must use snake_case ASCII only." },
+        title: { type: "string", description: "Final path segment for the new memory." },
         disclosure: { type: "string" },
         glossary: { type: "array", items: { type: "string" } }
       }
@@ -575,13 +576,13 @@ export default function register(api) {
   api.registerTool({
     name: "nocturne_update_node",
     label: "Nocturne update node",
-    description: "Update a Nocturne node by full `uri`.",
+    description: "Revise an existing long-term memory node when stored knowledge becomes clearer, newer, or more accurate.",
     parameters: {
       type: "object",
       additionalProperties: false,
       required: ["uri"],
       properties: {
-        uri: { type: "string", description: "Full memory URI like core://agent or project://workflow/browser_policy." },
+        uri: { type: "string", description: "Full memory URI for the node you want to revise." },
         content: { type: "string" },
         priority: { type: "integer", minimum: 0 },
         disclosure: { type: "string" },
@@ -623,13 +624,13 @@ export default function register(api) {
   api.registerTool({
     name: "nocturne_delete_node",
     label: "Nocturne delete node",
-    description: "Delete a Nocturne memory path by full `uri`.",
+    description: "Remove a memory path that is obsolete, duplicated, or no longer wanted.",
     parameters: {
       type: "object",
       additionalProperties: false,
       required: ["uri"],
       properties: {
-        uri: { type: "string", description: "Full memory URI like core://agent or project://workflow/browser_policy." }
+        uri: { type: "string", description: "Full memory URI for the path you want to remove." }
       }
     },
     async execute(_id, params) {
@@ -649,14 +650,14 @@ export default function register(api) {
   api.registerTool({
     name: "nocturne_add_alias",
     label: "Nocturne add alias",
-    description: "Create an alias URI for an existing Nocturne memory. Both `new_uri` and `target_uri` are full URIs like project://workflow/browser_policy. The `new_uri` path must use snake_case ASCII only (lowercase letters, digits, underscores; no Chinese).",
+    description: "Create another access path to an existing memory so it can be found from multiple contexts.",
     parameters: {
       type: "object",
       additionalProperties: false,
       required: ["new_uri", "target_uri"],
       properties: {
-        new_uri: { type: "string", description: "Full alias URI like project://workflow/browser_policy. Path segments must be snake_case ASCII only." },
-        target_uri: { type: "string", description: "Full target URI like core://workflow/browser_policy." },
+        new_uri: { type: "string", description: "New memory URI that will act as the alias entry point." },
+        target_uri: { type: "string", description: "Existing memory URI that the alias should point to." },
         priority: { type: "integer", minimum: 0 },
         disclosure: { type: "string" }
       }
@@ -680,7 +681,7 @@ export default function register(api) {
   api.registerTool({
     name: "nocturne_list_session_reads",
     label: "Nocturne list session reads",
-    description: "List Nocturne nodes already read in the current session.",
+    description: "Show which memory nodes have already been opened in this session.",
     parameters: {
       type: "object",
       additionalProperties: false,
@@ -705,7 +706,7 @@ export default function register(api) {
   api.registerTool({
     name: "nocturne_clear_session_reads",
     label: "Nocturne clear session reads",
-    description: "Clear Nocturne read tracking for a session.",
+    description: "Reset per-session memory read tracking.",
     parameters: {
       type: "object",
       additionalProperties: false,

@@ -1,7 +1,7 @@
 {
   "id": "nocturne",
   "name": "Nocturne Memory",
-  "description": "Direct Nocturne backend API plugin with prompt guidance and lifecycle hooks.",
+  "description": "Primary long-term memory system for identity, preferences, rules, and cross-session project knowledge, with recall and lifecycle hooks.",
   "version": "0.1.0",
   "configSchema": {
     "type": "object",
