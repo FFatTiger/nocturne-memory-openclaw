@@ -177,9 +177,9 @@ function parseUri(uri) {
   return { domain: 'core', path: value.replace(/^\/+|\/+$/g, '') };
 }
 
-export async function addAlias({ newUri, targetUri, priority = 0, disclosure = null }) {
-  const target = parseUri(targetUri);
-  const alias = parseUri(newUri);
+export async function addAlias({ new_uri, target_uri, priority = 0, disclosure = null }) {
+  const target = parseUri(target_uri);
+  const alias = parseUri(new_uri);
   const aliasSegments = assertValidPathSegments(alias.path, 'new_uri path');
 
   const parentPath = aliasSegments.slice(0, -1).join('/');

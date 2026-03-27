@@ -215,6 +215,15 @@ Current day-to-day tool surface (11 tools):
 
 The app also includes recall, review, and maintenance flows used by the web UI and plugin integration.
 
+### Tool locator conventions
+
+To reduce ambiguity in day-to-day model use:
+
+- `nocturne_get_node`, `nocturne_update_node`, `nocturne_delete_node`: use a single locator field, `uri`, with full values like `core://agent`.
+- Recall lines already contain full URIs, so the follow-up read shape is directly `nocturne_get_node({ uri: "..." })`.
+- `nocturne_create_node`: prefer `uri` for the final target node, like `project://workflow/browser_policy`; otherwise pass `domain` + `parent_path` + `title`.
+- `nocturne_add_alias`: both `new_uri` and `target_uri` are full URIs.
+
 ## API surface
 
 Main routes now live under `/api/*`.

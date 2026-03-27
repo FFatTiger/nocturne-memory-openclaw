@@ -54,9 +54,7 @@ function authHeaders(pluginCfg, includeJson = true) {
 
 function buildApiUrl(pluginCfg, path) {
   const rawPath = String(path || "");
-  const normalizedPath = rawPath.startsWith("/api/")
-    ? rawPath
-    : `/api${rawPath.startsWith("/") ? rawPath : `/${rawPath}`}`;
+  const normalizedPath = `/api${rawPath.startsWith("/") ? rawPath : `/${rawPath}`}`;
   return `${pluginCfg.baseUrl}${normalizedPath}`;
 }
 
@@ -88,6 +86,72 @@ async function fetchJson(pluginCfg, path, options = {}) {
   }
 
   return data;
+}
+
+function trimSlashes(value) {
+  return String(value || "").trim().replace(/^\/+|\/+$/g, "");
+}
+
+function parseMemoryUri(value, fallbackDomain = DEFAULT_DOMAIN) {
+  const raw = String(value || "").trim();
+  if (!raw) return { domain: fallbackDomain, path: "" };
+  if (raw.includes("://")) {
+    const [domainPart, pathPart] = raw.split("://", 2);
+    return { domain: domainPart.trim() || fallbackDomain, path: trimSlashes(pathPart) };
+  }
+  return { domain: fallbackDomain, path: trimSlashes(raw) };
+}
+
+function sameLocator(a, b) {
+  return a?.domain === b?.domain && a?.path === b?.path;
+}
+
+function resolveMemoryLocator(params, {
+  defaultDomain = DEFAULT_DOMAIN,
+  domainKey = "domain",
+  pathKey = "path",
+  uriKey = "uri",
+  allowEmptyPath = true,
+  label = "path",
+} = {}) {
+  const explicitDomain = typeof params?.[domainKey] === "string" && params[domainKey].trim()
+    ? params[domainKey].trim()
+    : "";
+  const fallbackDomain = explicitDomain || defaultDomain;
+  const rawPath = typeof params?.[pathKey] === "string" ? params[pathKey].trim() : "";
+  const rawUri = typeof params?.[uriKey] === "string" ? params[uriKey].trim() : "";
+
+  if (rawPath.includes("://")) {
+    throw new Error(`Invalid ${pathKey}: expected a relative path inside ${domainKey}, got a full URI. Pass ${uriKey}="domain://path" instead.`);
+  }
+
+  const locatorFromPath = rawPath
+    ? { domain: fallbackDomain, path: trimSlashes(rawPath) }
+    : { domain: fallbackDomain, path: "" };
+  const locatorFromUri = rawUri ? parseMemoryUri(rawUri, fallbackDomain) : null;
+
+  if (locatorFromUri && rawPath && !sameLocator(locatorFromUri, locatorFromPath)) {
+    throw new Error(`Conflicting ${uriKey} and ${pathKey}: ${locatorFromUri.domain}://${locatorFromUri.path} vs ${locatorFromPath.domain}://${locatorFromPath.path}`);
+  }
+  if (locatorFromUri && explicitDomain && locatorFromUri.domain !== explicitDomain) {
+    throw new Error(`Conflicting ${uriKey} and ${domainKey}: ${locatorFromUri.domain} vs ${explicitDomain}`);
+  }
+
+  const locator = locatorFromUri || locatorFromPath;
+  if (!allowEmptyPath && !locator.path) {
+    throw new Error(`${label} is required. Pass ${uriKey}="domain://path" or ${pathKey}="relative/path".`);
+  }
+  return locator;
+}
+
+function splitParentPathAndTitle(path) {
+  const cleanPath = trimSlashes(path);
+  const segments = cleanPath.split("/").filter(Boolean);
+  if (segments.length === 0) return { parentPath: "", title: "" };
+  return {
+    parentPath: segments.slice(0, -1).join("/"),
+    title: segments[segments.length - 1],
+  };
 }
 
 function formatNode(data) {
@@ -284,7 +348,10 @@ const GUIDANCE = [
   "Use Nocturne for long-term identity, user preferences, stable rules, and cross-session project constraints.",
   "Use local file memory_search for historical markdown archives and past worklogs.",
   "When a question is really about current long-term memory, prefer the Nocturne tools in this plugin.",
-  "When a <recall> block is present, treat each line as score | uri | matched cues, and read a node only if your answer depends on those cues.",
+  "For node locators, prefer full `uri` values like `core://agent`.",
+  "If a tool also accepts `domain` + `path`, then `path` means a relative path inside that domain only; do not intentionally put `domain://...` into `path`.",
+  "For create, prefer `uri` for the final target node; otherwise use `domain` + `parent_path` + `title`.",
+  "When a <recall> block is present, each line already contains a full URI. If you read that node, pass it via the tool's `uri` parameter, not `path`.",
   "Read before update. Do not blindly edit long-term memory nodes.",
 ].join("\n");
 
@@ -325,26 +392,27 @@ export default function register(api) {
   api.registerTool({
     name: "nocturne_get_node",
     label: "Nocturne get node",
-    description: "Read a Nocturne node by domain/path through the backend browse API.",
+    description: "Read a Nocturne node by full `uri`. This matches recall output directly.",
     parameters: {
       type: "object",
       additionalProperties: false,
+      required: ["uri"],
       properties: {
-        domain: { type: "string", description: "Domain like core" },
-        path: { type: "string", description: "Path inside the domain, like agent/my_user. Empty string means root." },
+        uri: { type: "string", description: "Full memory URI like core://agent or project://nocturne_openclaw_integration." },
         nav_only: { type: "boolean", description: "If true, skip expensive glossary processing." },
         __session_id: { type: "string", description: "Internal session tracking field." },
         __session_key: { type: "string", description: "Internal session tracking field." }
       }
     },
     async execute(_id, params) {
-      const domain = typeof params?.domain === "string" && params.domain.trim() ? params.domain.trim() : pluginCfg.defaultDomain;
-      const path = typeof params?.path === "string" ? params.path.trim() : "";
       const navOnly = params?.nav_only === true;
-      const qs = new URLSearchParams({ domain, path, nav_only: String(navOnly) });
       const sessionId = typeof params?.__session_id === "string" && params.__session_id.trim() ? params.__session_id.trim() : "";
       const sessionKey = typeof params?.__session_key === "string" && params.__session_key.trim() ? params.__session_key.trim() : "";
+      let domain = pluginCfg.defaultDomain;
+      let path = "";
       try {
+        ({ domain, path } = resolveMemoryLocator(params, { defaultDomain: pluginCfg.defaultDomain, pathKey: "__unused_path", allowEmptyPath: true, label: "uri" }));
+        const qs = new URLSearchParams({ domain, path, nav_only: String(navOnly) });
         const data = await fetchJson(pluginCfg, `/browse/node?${qs.toString()}`, { method: "GET" });
         const node = data?.node || {};
         if (sessionId && node?.uri) {
@@ -442,32 +510,55 @@ export default function register(api) {
   api.registerTool({
     name: "nocturne_create_node",
     label: "Nocturne create node",
-    description: "Create a Nocturne memory node through the backend browse API. If title is provided, it becomes the final path segment and must be snake_case ASCII (lowercase letters, digits, underscores only; no Chinese).",
+    description: "Create a Nocturne memory node. Prefer `uri` for the final target URI; or use `domain` + `parent_path` + `title`.",
     parameters: {
       type: "object",
       additionalProperties: false,
       required: ["content", "priority"],
       properties: {
-        domain: { type: "string" },
-        parent_path: { type: "string" },
+        uri: { type: "string", description: "Optional full target URI like project://workflow/browser_policy. If provided, the plugin derives domain + parent_path + title from it." },
+        domain: { type: "string", description: "Domain like core. Optional when `uri` is provided." },
+        parent_path: { type: "string", description: "Parent path inside the domain only, like workflow. Do not include domain:// or the final title here." },
         content: { type: "string" },
         priority: { type: "integer", minimum: 0 },
-        title: { type: "string", description: "Final path segment. Must use snake_case ASCII only." },
+        title: { type: "string", description: "Final path segment only. Must use snake_case ASCII only." },
         disclosure: { type: "string" },
         glossary: { type: "array", items: { type: "string" } }
       }
     },
     async execute(_id, params) {
+      const glossary = normalizeKeywordList(params?.glossary);
       const body = {
         domain: typeof params?.domain === "string" && params.domain.trim() ? params.domain.trim() : pluginCfg.defaultDomain,
-        parent_path: typeof params?.parent_path === "string" ? params.parent_path.trim() : "",
+        parent_path: typeof params?.parent_path === "string" ? trimSlashes(params.parent_path) : "",
         content: String(params?.content || ""),
         priority: Number(params?.priority),
       };
-      const glossary = normalizeKeywordList(params?.glossary);
-      if (typeof params?.title === "string") body.title = params.title;
-      if (typeof params?.disclosure === "string") body.disclosure = params.disclosure;
       try {
+        if (typeof params?.title === "string") body.title = params.title.trim();
+        if (typeof params?.disclosure === "string") body.disclosure = params.disclosure;
+
+        if (typeof params?.uri === "string" && params.uri.trim()) {
+          const target = resolveMemoryLocator(params, {
+            defaultDomain: pluginCfg.defaultDomain,
+            domainKey: "domain",
+            pathKey: "parent_path",
+            uriKey: "uri",
+            allowEmptyPath: false,
+            label: "uri",
+          });
+          const derived = splitParentPathAndTitle(target.path);
+          if (!derived.title) {
+            throw new Error("Create target URI must include a final path segment, like project://workflow/browser_policy");
+          }
+          if (typeof params?.title === "string" && params.title.trim() && params.title.trim() !== derived.title) {
+            throw new Error(`Conflicting uri and title: ${derived.title} vs ${params.title.trim()}`);
+          }
+          body.domain = target.domain;
+          body.parent_path = derived.parentPath;
+          body.title = derived.title;
+        }
+
         const data = await fetchJson(pluginCfg, `/browse/node`, { method: "POST", body: JSON.stringify(body) });
         const nodeUuid = String(data?.node_uuid || "").trim();
         const glossaryResult = nodeUuid && glossary.length > 0
@@ -484,14 +575,13 @@ export default function register(api) {
   api.registerTool({
     name: "nocturne_update_node",
     label: "Nocturne update node",
-    description: "Update a Nocturne node through the backend browse API.",
+    description: "Update a Nocturne node by full `uri`.",
     parameters: {
       type: "object",
       additionalProperties: false,
-      required: ["path"],
+      required: ["uri"],
       properties: {
-        domain: { type: "string" },
-        path: { type: "string" },
+        uri: { type: "string", description: "Full memory URI like core://agent or project://workflow/browser_policy." },
         content: { type: "string" },
         priority: { type: "integer", minimum: 0 },
         disclosure: { type: "string" },
@@ -500,15 +590,16 @@ export default function register(api) {
       }
     },
     async execute(_id, params) {
-      const domain = typeof params?.domain === "string" && params.domain.trim() ? params.domain.trim() : pluginCfg.defaultDomain;
-      const path = String(params?.path || "").trim();
       const body = {};
       const glossaryAdd = normalizeKeywordList(params?.glossary_add);
       const glossaryRemove = normalizeKeywordList(params?.glossary_remove);
       if (typeof params?.content === "string") body.content = params.content;
       if (Number.isFinite(params?.priority)) body.priority = params.priority;
       if (typeof params?.disclosure === "string") body.disclosure = params.disclosure;
+      let domain = pluginCfg.defaultDomain;
+      let path = "";
       try {
+        ({ domain, path } = resolveMemoryLocator(params, { defaultDomain: pluginCfg.defaultDomain, pathKey: "__unused_path", allowEmptyPath: false, label: "uri" }));
         const qs = new URLSearchParams({ domain, path });
         const data = await fetchJson(pluginCfg, `/browse/node?${qs.toString()}`, { method: "PUT", body: JSON.stringify(body) });
         let glossaryResult = { added: [], removed: [] };
@@ -532,20 +623,20 @@ export default function register(api) {
   api.registerTool({
     name: "nocturne_delete_node",
     label: "Nocturne delete node",
-    description: "Delete a Nocturne memory path through the backend browse API.",
+    description: "Delete a Nocturne memory path by full `uri`.",
     parameters: {
       type: "object",
       additionalProperties: false,
-      required: ["path"],
+      required: ["uri"],
       properties: {
-        domain: { type: "string" },
-        path: { type: "string" }
+        uri: { type: "string", description: "Full memory URI like core://agent or project://workflow/browser_policy." }
       }
     },
     async execute(_id, params) {
-      const domain = typeof params?.domain === "string" && params.domain.trim() ? params.domain.trim() : pluginCfg.defaultDomain;
-      const path = String(params?.path || "").trim();
+      let domain = pluginCfg.defaultDomain;
+      let path = "";
       try {
+        ({ domain, path } = resolveMemoryLocator(params, { defaultDomain: pluginCfg.defaultDomain, pathKey: "__unused_path", allowEmptyPath: false, label: "uri" }));
         const qs = new URLSearchParams({ domain, path });
         const data = await fetchJson(pluginCfg, `/browse/node?${qs.toString()}`, { method: "DELETE" });
         return textResult(`Deleted ${domain}://${path}`, { ok: true, result: data });
@@ -558,14 +649,14 @@ export default function register(api) {
   api.registerTool({
     name: "nocturne_add_alias",
     label: "Nocturne add alias",
-    description: "Create an alias URI for an existing Nocturne memory. new_uri path must use snake_case ASCII only (lowercase letters, digits, underscores; no Chinese).",
+    description: "Create an alias URI for an existing Nocturne memory. Both `new_uri` and `target_uri` are full URIs like project://workflow/browser_policy. The `new_uri` path must use snake_case ASCII only (lowercase letters, digits, underscores; no Chinese).",
     parameters: {
       type: "object",
       additionalProperties: false,
       required: ["new_uri", "target_uri"],
       properties: {
-        new_uri: { type: "string", description: "Alias URI. Path segments must be snake_case ASCII only." },
-        target_uri: { type: "string" },
+        new_uri: { type: "string", description: "Full alias URI like project://workflow/browser_policy. Path segments must be snake_case ASCII only." },
+        target_uri: { type: "string", description: "Full target URI like core://workflow/browser_policy." },
         priority: { type: "integer", minimum: 0 },
         disclosure: { type: "string" }
       }
