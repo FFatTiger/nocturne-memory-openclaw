@@ -84,14 +84,14 @@ async function loadSourceDocuments() {
 
 export async function ensureRecallIndex(embedding) {
   const sourceDocs = await loadSourceDocuments();
-  const existing = await sql(`SELECT domain, path, source_signature FROM recall_documents`);
+  const existing = await sql(`SELECT domain, path, source_signature, embedding_model FROM recall_documents`);
   const existingMap = new Map(existing.rows.map((row) => [`${row.domain}::${row.path}`, row]));
   const sourceMap = new Map(sourceDocs.map((doc) => [`${doc.domain}::${doc.path}`, doc]));
 
   const stale = sourceDocs.filter((doc) => {
     const key = `${doc.domain}::${doc.path}`;
     const row = existingMap.get(key);
-    return !row || row.source_signature !== doc.source_signature;
+    return !row || row.source_signature !== doc.source_signature || row.embedding_model !== embedding.model;
   });
 
   if (stale.length) {
